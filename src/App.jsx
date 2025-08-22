@@ -1,10 +1,3 @@
-When you click the "ENABLE WEBCAM" button, the webcam feed appears, but the face landmarks are not drawn on the canvas. This is because the `webcamRef.current` reference is not properly being used within the `predictWebcam` function, specifically when setting the `style` for the video and canvas elements. Additionally, the `video` and `canvas` variables are being declared but not used correctly to set the dimensions.
-
-The corrected code addresses this by ensuring that the video and canvas elements are correctly referenced and their dimensions are set before the `detectForVideo` method is called. This ensures that the MediaPipe model has a properly sized video feed to process, allowing it to detect and draw the facial landmarks on the canvas.
-
-Here is the corrected and fully updated code:
-
-```jsx
 import React, { useEffect, useRef, useState } from 'react';
 import vision from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3';
 
@@ -510,5 +503,6 @@ const App = () => {
       </style>
     </div>
   );
+};
 
 export default App;
