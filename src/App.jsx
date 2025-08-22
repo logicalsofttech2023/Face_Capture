@@ -7,6 +7,7 @@ const App = () => {
   // Refs
   const webcamRef = useRef(null);
   const outputCanvasRef = useRef(null);
+  const containerRef = useRef(null);
 
   // State
   const [faceLandmarker, setFaceLandmarker] = useState(null);
@@ -200,11 +201,12 @@ const App = () => {
       const constraints = {
         video: {
           facingMode: 'user',
-          width: { ideal: 1280 }, // Increased resolution for better focus
-          height: { ideal: 720 },
-          focusMode: 'continuous' // Enable continuous focus for better face detection
+          width: { ideal: 640 }, // Reduced resolution for better performance
+          height: { ideal: 480 },
+          frameRate: { ideal: 30 }
         }
       };
+      
       try {
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         if (webcamRef.current) {
@@ -262,15 +264,9 @@ const App = () => {
     }
 
     try {
-      // Set video and canvas dimensions
-      const radio = video.videoHeight / video.videoWidth;
-      const videoWidth = 640;
-      video.style.width = `${videoWidth}px`;
-      video.style.height = `${videoWidth * radio}px`;
+      // Set canvas dimensions to match video
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
-      canvas.style.width = `${videoWidth}px`;
-      canvas.style.height = `${videoWidth * radio}px`;
 
       // Detect face landmarks
       const startTimeMs = performance.now();
@@ -286,6 +282,9 @@ const App = () => {
       // Draw landmarks if face detected
       if (results.faceLandmarks && results.faceLandmarks.length > 0) {
         const drawingUtils = new DrawingUtils(ctx);
+        
+        // Clear previous error if face is detected
+        setWebcamError(null);
         
         // Calculate and update measurements
         const newMeasurements = calculateMeasurements(results.faceLandmarks, canvas);
@@ -337,7 +336,7 @@ const App = () => {
           drawPoint(landmarks[4], "#fbbc05", 3); // Nose tip
         }
       } else {
-        setWebcamError("No face detected. Please position your face in the frame.");
+        setWebcamError("No face detected. Please position your face in the frame and ensure good lighting.");
         setMeasurements(null);
       }
     } catch (error) {
@@ -431,7 +430,7 @@ const App = () => {
                 </div>
               )}
 
-              <div className="video-wrapper">
+              <div className="video-wrapper" ref={containerRef}>
                 <video
                   ref={webcamRef}
                   autoPlay
@@ -675,7 +674,7 @@ const App = () => {
           left: 0;
           width: 100%;
           height: 100%;
-          object-fit: cover;
+          object-fit: contain; /* Changed from cover to contain to prevent zooming */
         }
         
         .measurement-canvas {
