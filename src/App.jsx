@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import vision from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3';
 
 const App = () => {
@@ -8,9 +8,6 @@ const App = () => {
   const imageRef = useRef(null);
   const webcamRef = useRef(null);
   const outputCanvasRef = useRef(null);
-  const lastVideoTimeRef = useRef(-1);
-  const animationFrameRef = useRef(null);
-  const detectionInProgressRef = useRef(false);
 
   // State
   const [faceLandmarker, setFaceLandmarker] = useState(null);
@@ -90,29 +87,53 @@ const App = () => {
       // Detect face landmarks
       const faceLandmarkerResult = faceLandmarker.detect(imageRef.current);
 
-      // Draw landmarks - simplified for performance
+      // Draw landmarks
       if (faceLandmarkerResult.faceLandmarks) {
         for (const landmarks of faceLandmarkerResult.faceLandmarks) {
-          // Only draw the most important landmarks for performance
           drawingUtils.drawConnectors(
             landmarks,
-            FaceLandmarker.FACE_LANDMARKS_FACE_OVAL,
-            { color: "#E0E0E0", lineWidth: 1 }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_LIPS,
-            { color: "#E0E0E0", lineWidth: 1 }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_LEFT_EYE,
-            { color: "#30FF30", lineWidth: 1 }
+            FaceLandmarker.FACE_LANDMARKS_TESSELATION,
+            { color: "#C0C0C070", lineWidth: 1 }
           );
           drawingUtils.drawConnectors(
             landmarks,
             FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE,
-            { color: "#FF3030", lineWidth: 1 }
+            { color: "#FF3030" }
+          );
+          drawingUtils.drawConnectors(
+            landmarks,
+            FaceLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW,
+            { color: "#FF3030" }
+          );
+          drawingUtils.drawConnectors(
+            landmarks,
+            FaceLandmarker.FACE_LANDMARKS_LEFT_EYE,
+            { color: "#30FF30" }
+          );
+          drawingUtils.drawConnectors(
+            landmarks,
+            FaceLandmarker.FACE_LANDMARKS_LEFT_EYEBROW,
+            { color: "#30FF30" }
+          );
+          drawingUtils.drawConnectors(
+            landmarks,
+            FaceLandmarker.FACE_LANDMARKS_FACE_OVAL,
+            { color: "#E0E0E0" }
+          );
+          drawingUtils.drawConnectors(
+            landmarks,
+            FaceLandmarker.FACE_LANDMARKS_LIPS,
+            { color: "#E0E0E0" }
+          );
+          drawingUtils.drawConnectors(
+            landmarks,
+            FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS,
+            { color: "#FF3030" }
+          );
+          drawingUtils.drawConnectors(
+            landmarks,
+            FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS,
+            { color: "#30FF30" }
           );
         }
       }
@@ -140,21 +161,16 @@ const App = () => {
       // Stop webcam
       setWebcamRunning(false);
       setWebcamError(null);
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
-      }
       if (webcamRef.current && webcamRef.current.srcObject) {
         const tracks = webcamRef.current.srcObject.getTracks();
         tracks.forEach(track => track.stop());
-        webcamRef.current.srcObject = null;
+        webcamRef.current.srcObject = null; // Clear the stream
+        webcamRef.current.pause(); // Ensure video is paused
       }
     } else {
       // Start webcam
       setWebcamRunning(true);
       setWebcamError(null);
-      lastVideoTimeRef.current = -1;
-      detectionInProgressRef.current = false;
 
       const constraints = {
         video: {
@@ -179,8 +195,6 @@ const App = () => {
           });
 
           await webcamRef.current.play();
-          // Start the detection loop
-          predictWebcam();
         } else {
           throw new Error("Webcam reference not available.");
         }
@@ -192,9 +206,10 @@ const App = () => {
     }
   };
 
-  // Webcam prediction - optimized with useCallback
-  const predictWebcam = useCallback(async () => {
+  // Webcam prediction
+  const predictWebcam = async () => {
     if (!webcamRunning || !webcamRef.current || !outputCanvasRef.current || !faceLandmarker) {
+      setWebcamError("Webcam, canvas, or face landmarker not ready.");
       return;
     }
 
@@ -203,19 +218,10 @@ const App = () => {
 
     // Check if video is ready
     if (video.videoWidth === 0 || video.videoHeight === 0 || video.paused || video.ended) {
-      animationFrameRef.current = requestAnimationFrame(predictWebcam);
+      setWebcamError("Video stream not ready or paused. Waiting for webcam to load...");
+      requestAnimationFrame(predictWebcam);
       return;
     }
-
-    // Throttle detection to improve performance
-    const now = performance.now();
-    if (detectionInProgressRef.current || (lastVideoTimeRef.current !== -1 && now - lastVideoTimeRef.current < 100)) {
-      animationFrameRef.current = requestAnimationFrame(predictWebcam);
-      return;
-    }
-
-    detectionInProgressRef.current = true;
-    lastVideoTimeRef.current = now;
 
     try {
       // Set video and canvas dimensions
@@ -246,71 +252,96 @@ const App = () => {
       // Clear canvas
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Draw landmarks - simplified for performance
+      // Draw landmarks
       if (results.faceLandmarks) {
         for (const landmarks of results.faceLandmarks) {
-          // Only draw the most important landmarks for performance
           drawingUtils.drawConnectors(
             landmarks,
-            FaceLandmarker.FACE_LANDMARKS_FACE_OVAL,
-            { color: "#E0E0E0", lineWidth: 1 }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_LIPS,
-            { color: "#E0E0E0", lineWidth: 1 }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_LEFT_EYE,
-            { color: "#30FF30", lineWidth: 1 }
+            FaceLandmarker.FACE_LANDMARKS_TESSELATION,
+            { color: "#C0C0C070", lineWidth: 1 }
           );
           drawingUtils.drawConnectors(
             landmarks,
             FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE,
-            { color: "#FF3030", lineWidth: 1 }
+            { color: "#FF3030" }
+          );
+          drawingUtils.drawConnectors(
+            landmarks,
+            FaceLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW,
+            { color: "#FF3030" }
+          );
+          drawingUtils.drawConnectors(
+            landmarks,
+            FaceLandmarker.FACE_LANDMARKS_LEFT_EYE,
+            { color: "#30FF30" }
+          );
+          drawingUtils.drawConnectors(
+            landmarks,
+            FaceLandmarker.FACE_LANDMARKS_LEFT_EYEBROW,
+            { color: "#30FF30" }
+          );
+          drawingUtils.drawConnectors(
+            landmarks,
+            FaceLandmarker.FACE_LANDMARKS_FACE_OVAL,
+            { color: "#E0E0E0" }
+          );
+          drawingUtils.drawConnectors(
+            landmarks,
+            FaceLandmarker.FACE_LANDMARKS_LIPS,
+            { color: "#E0E0E0" }
+          );
+          drawingUtils.drawConnectors(
+            landmarks,
+            FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS,
+            { color: "#FF3030" }
+          );
+          drawingUtils.drawConnectors(
+            landmarks,
+            FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS,
+            { color: "#30FF30" }
           );
         }
       } else {
         setWebcamError("No face detected in webcam feed.");
       }
 
-      // Update blend shapes - only if changed significantly
+      // Update blend shapes
       if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
-        setVideoBlendShapes(prev => {
-          // Only update if there's a significant change to avoid unnecessary re-renders
-          if (prev.length === 0) return results.faceBlendshapes[0].categories;
-          
-          const significantChange = results.faceBlendshapes[0].categories.some(
-            (shape, i) => i < prev.length && Math.abs(shape.score - prev[i].score) > 0.1
-          );
-          
-          return significantChange ? results.faceBlendshapes[0].categories : prev;
-        });
+        setVideoBlendShapes(results.faceBlendshapes[0].categories);
       } else {
         setVideoBlendShapes([]);
       }
     } catch (error) {
       console.error("Error during webcam prediction:", error);
       setWebcamError(`Webcam prediction error: ${error.message}`);
-    } finally {
-      detectionInProgressRef.current = false;
     }
 
     // Continue predicting if webcam is still running
     if (webcamRunning) {
-      animationFrameRef.current = requestAnimationFrame(predictWebcam);
+      requestAnimationFrame(predictWebcam);
     }
-  }, [webcamRunning, faceLandmarker, runningMode]);
+  };
 
-  // Clean up animation frame on unmount
+  // Start webcam prediction when video is loaded
   useEffect(() => {
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, []);
+    let animationFrameId;
+    if (webcamRunning && webcamRef.current) {
+      const onLoadedData = () => {
+        if (webcamRunning) {
+          animationFrameId = requestAnimationFrame(predictWebcam);
+        }
+      };
+      webcamRef.current.addEventListener('loadeddata', onLoadedData);
+      return () => {
+        if (webcamRef.current) {
+          webcamRef.current.removeEventListener('loadeddata', onLoadedData);
+        }
+        if (animationFrameId) {
+          cancelAnimationFrame(animationFrameId);
+        }
+      };
+    }
+  }, [webcamRunning]);
 
   // Check if webcam is supported
   const hasGetUserMedia = () => {
@@ -478,7 +509,7 @@ const App = () => {
                 ref={webcamRef}
                 autoPlay
                 playsInline
-                muted
+                muted // Added to comply with autoplay policies
                 style={{
                   position: 'absolute',
                   left: 0,
@@ -528,7 +559,7 @@ const App = () => {
             max-height: 300px;
             overflow-y: auto;
             border: 1px solid #e0e0e0;
-            border-radius: 4px;
+            borderRadius: 4px;
             margin-top: 10px;
           }
 
