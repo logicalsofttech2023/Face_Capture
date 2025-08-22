@@ -114,20 +114,44 @@ const App = () => {
     const rightEyeOuter = toPixels(landmark[263]); // Right eye outer corner
     const rightPupilHeight = Math.abs(rightPupil.y - (rightEyeInner.y + rightEyeOuter.y) / 2) * pxToMm;
     
-    // Determine face shape (simplified)
-    const jawWidth = Math.sqrt(
-      Math.pow(toPixels(landmark[234]).x - toPixels(landmark[454]).x, 2)
-    ) * pxToMm;
+    // Enhanced face shape detection
+    const jawLeft = toPixels(landmark[234]);
+    const jawRight = toPixels(landmark[454]);
+    const forehead = toPixels(landmark[10]);
+    const chin = toPixels(landmark[152]);
     
-    const faceHeight = Math.sqrt(
-      Math.pow(toPixels(landmark[10]).y - toPixels(landmark[152]).y, 2)
-    ) * pxToMm;
+    const jawWidth = Math.sqrt(Math.pow(jawRight.x - jawLeft.x, 2)) * pxToMm;
+    const faceHeight = Math.sqrt(Math.pow(chin.y - forehead.y, 2)) * pxToMm;
     
+    // Get cheekbone width
+    const leftCheek = toPixels(landmark[123]);
+    const rightCheek = toPixels(landmark[352]);
+    const cheekboneWidth = Math.sqrt(Math.pow(rightCheek.x - leftCheek.x, 2)) * pxToMm;
+    
+    // Get forehead width
+    const leftTemple = toPixels(landmark[21]);
+    const rightTemple = toPixels(landmark[251]);
+    const foreheadWidth = Math.sqrt(Math.pow(rightTemple.x - leftTemple.x, 2)) * pxToMm;
+    
+    // Calculate ratios for face shape detection
     const faceRatio = jawWidth / faceHeight;
+    const cheekboneJawRatio = cheekboneWidth / jawWidth;
+    const foreheadJawRatio = foreheadWidth / jawWidth;
+    
+    // Enhanced face shape classification
     let faceShape = "Oval";
     
-    if (faceRatio > 0.85) faceShape = "Round";
-    if (faceRatio < 0.75) faceShape = "Long";
+    if (faceRatio > 0.85 && cheekboneJawRatio > 0.95) {
+      faceShape = "Round";
+    } else if (faceRatio < 0.75 && cheekboneJawRatio > 0.95) {
+      faceShape = "Long";
+    } else if (Math.abs(jawWidth - cheekboneWidth) < 5 && Math.abs(jawWidth - foreheadWidth) < 5) {
+      faceShape = "Square";
+    } else if (foreheadJawRatio > 1.1 && cheekboneJawRatio > 1.05) {
+      faceShape = "Heart";
+    } else if (cheekboneJawRatio > 1.05 && foreheadJawRatio < 0.95) {
+      faceShape = "Diamond";
+    }
     
     return {
       pd: pd.toFixed(1),
@@ -144,7 +168,9 @@ const App = () => {
         right: rightPupilHeight.toFixed(1),
         combined: ((leftPupilHeight + rightPupilHeight) / 2).toFixed(1)
       },
-      faceShape
+      faceShape,
+      faceWidth: jawWidth.toFixed(1),
+      faceLength: faceHeight.toFixed(1)
     };
   };
 
@@ -174,8 +200,9 @@ const App = () => {
       const constraints = {
         video: {
           facingMode: 'user',
-          width: { ideal: 640 },
-          height: { ideal: 480 }
+          width: { ideal: 1280 }, // Increased resolution for better focus
+          height: { ideal: 720 },
+          focusMode: 'continuous' // Enable continuous focus for better face detection
         }
       };
       try {
@@ -294,10 +321,20 @@ const App = () => {
             { color: "#34a853", lineWidth: 2 }
           );
           
-          // Draw measurement points
-          drawingUtils.drawCircle(landmarks[468], { color: "#ea4335", radius: 3 }); // Left pupil
-          drawingUtils.drawCircle(landmarks[473], { color: "#ea4335", radius: 3 }); // Right pupil
-          drawingUtils.drawCircle(landmarks[4], { color: "#fbbc05", radius: 3 }); // Nose tip
+          // Draw measurement points using canvas directly instead of DrawingUtils
+          // to avoid the "drawCircle is not a function" error
+          const drawPoint = (point, color, size) => {
+            const x = point.x * canvas.width;
+            const y = point.y * canvas.height;
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, 2 * Math.PI);
+            ctx.fill();
+          };
+          
+          drawPoint(landmarks[468], "#ea4335", 3); // Left pupil
+          drawPoint(landmarks[473], "#ea4335", 3); // Right pupil
+          drawPoint(landmarks[4], "#fbbc05", 3); // Nose tip
         }
       } else {
         setWebcamError("No face detected. Please position your face in the frame.");
@@ -401,11 +438,15 @@ const App = () => {
                   playsInline
                   muted
                   className="webcam-feed"
-                  style={{ display: webcamRunning ? 'block' : 'none' }}
+                  style={{ 
+                    display: webcamRunning ? 'block' : 'none',
+                    transform: 'scaleX(-1)' // Mirror the webcam feed
+                  }}
                 ></video>
                 <canvas
                   ref={outputCanvasRef}
                   className="measurement-canvas"
+                  style={{ transform: 'scaleX(-1)' }} // Mirror the canvas
                 ></canvas>
 
                 {!webcamRunning && (
@@ -481,6 +522,21 @@ const App = () => {
                       </div>
                     </div>
                     <p className="measurement-desc">Vertical position of pupils</p>
+                  </div>
+                  
+                  <div className="measurement-card">
+                    <h3>Face Dimensions</h3>
+                    <div className="measurement-subvalues">
+                      <div>
+                        <span className="label">Width:</span>
+                        <span className="value">{measurements.faceWidth} mm</span>
+                      </div>
+                      <div>
+                        <span className="label">Length:</span>
+                        <span className="value">{measurements.faceLength} mm</span>
+                      </div>
+                    </div>
+                    <p className="measurement-desc">Basic face measurements</p>
                   </div>
                   
                   <div className="measurement-card">
