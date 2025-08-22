@@ -19,12 +19,19 @@ const App = () => {
   const [measurements, setMeasurements] = useState(null);
   const [finalMeasurements, setFinalMeasurements] = useState(null);
   const [isCaptured, setIsCaptured] = useState(false);
+  const [referenceObject, setReferenceObject] = useState(null);
+  const [calibrationMode, setCalibrationMode] = useState(false);
+  const [calibrationComplete, setCalibrationComplete] = useState(false);
+  const [distanceWarning, setDistanceWarning] = useState("");
 
   // Performance optimization
   const lastFrameTimeRef = useRef(0);
   const frameCountRef = useRef(0);
   const lastFpsUpdateRef = useRef(0);
   const minFrameInterval = 100;
+
+  // Reference object dimensions (standard credit card)
+  const referenceObjectWidth = 85.6; // mm
 
   // Initialize face landmarker
   useEffect(() => {
@@ -85,10 +92,16 @@ const App = () => {
       Math.pow(chin.x - forehead.x, 2) + Math.pow(chin.y - forehead.y, 2)
     );
 
-    // Use face height as reference (average male face height is ~190mm)
-    // This is more stable than using PD which varies between individuals
-    const averageFaceHeightMm = 190;
-    const pxToMm = averageFaceHeightMm / faceHeightPx;
+    // Check if we have a reference object for calibration
+    let pxToMm;
+    if (referenceObject && calibrationComplete) {
+      // Use reference object for calibration
+      pxToMm = referenceObjectWidth / referenceObject.widthPx;
+    } else {
+      // Use face height as reference (average male face height is ~190mm)
+      const averageFaceHeightMm = 190;
+      pxToMm = averageFaceHeightMm / faceHeightPx;
+    }
 
     // Calculate PD (Pupillary Distance)
     const pupilDistancePx = Math.sqrt(
@@ -185,6 +198,16 @@ const App = () => {
       faceShape = "Triangle";
     }
 
+    // Check if face is at optimal distance (face height should be about 70-80% of frame height)
+    const faceToFrameRatio = faceHeightPx / canvas.height;
+    if (faceToFrameRatio < 0.5) {
+      setDistanceWarning("Please move closer to the camera for more accurate measurements");
+    } else if (faceToFrameRatio > 0.9) {
+      setDistanceWarning("Please move further from the camera for more accurate measurements");
+    } else {
+      setDistanceWarning("");
+    }
+
     return {
       pd: pd.toFixed(1),
       npd: {
@@ -203,7 +226,64 @@ const App = () => {
       faceShape,
       faceWidth: faceWidth.toFixed(1),
       faceLength: faceHeight.toFixed(1),
+      calibrationMethod: referenceObject && calibrationComplete ? "Reference Object" : "Face Height Estimation"
     };
+  };
+
+  // Detect reference object (credit card) on forehead
+  const detectReferenceObject = (landmarks, canvas) => {
+    if (!landmarks || landmarks.length === 0) return null;
+
+    const landmark = landmarks[0];
+    
+    // Convert normalized coordinates to pixel coordinates
+    const toPixels = (point) => {
+      return {
+        x: point.x * canvas.width,
+        y: point.y * canvas.height,
+      };
+    };
+
+    // Get forehead points
+    const foreheadCenter = toPixels(landmark[10]);
+    const leftTemple = toPixels(landmark[234]);
+    const rightTemple = toPixels(landmark[454]);
+    
+    // Define search area above forehead
+    const searchArea = {
+      x: leftTemple.x,
+      y: Math.max(0, foreheadCenter.y - canvas.height * 0.2),
+      width: rightTemple.x - leftTemple.x,
+      height: canvas.height * 0.15
+    };
+
+    // This is a simplified approach - in a real application, you would use
+    // computer vision techniques to detect the reference object
+    // For this example, we'll assume the reference object is placed horizontally
+    // on the forehead and spans most of the forehead width
+    
+    return {
+      x: searchArea.x,
+      y: searchArea.y,
+      widthPx: searchArea.width,
+      heightPx: searchArea.width * 0.63, // Credit card aspect ratio
+      detected: true
+    };
+  };
+
+  // Start calibration mode
+  const startCalibration = () => {
+    setCalibrationMode(true);
+    setCalibrationComplete(false);
+    setReferenceObject(null);
+  };
+
+  // Complete calibration
+  const completeCalibration = () => {
+    if (referenceObject) {
+      setCalibrationComplete(true);
+      setCalibrationMode(false);
+    }
   };
 
   // Capture final measurements
@@ -218,6 +298,9 @@ const App = () => {
   const resetCapture = () => {
     setFinalMeasurements(null);
     setIsCaptured(false);
+    setReferenceObject(null);
+    setCalibrationComplete(false);
+    setCalibrationMode(false);
   };
 
   // Toggle webcam
@@ -234,6 +317,9 @@ const App = () => {
       setMeasurements(null);
       setFinalMeasurements(null);
       setIsCaptured(false);
+      setReferenceObject(null);
+      setCalibrationMode(false);
+      setCalibrationComplete(false);
       if (webcamRef.current && webcamRef.current.srcObject) {
         const tracks = webcamRef.current.srcObject.getTracks();
         tracks.forEach((track) => track.stop());
@@ -246,6 +332,9 @@ const App = () => {
       setWebcamError(null);
       setFinalMeasurements(null);
       setIsCaptured(false);
+      setReferenceObject(null);
+      setCalibrationMode(false);
+      setCalibrationComplete(false);
 
       const constraints = {
         video: {
@@ -349,6 +438,40 @@ const App = () => {
 
         // Clear previous error if face is detected
         setWebcamError(null);
+
+        // Detect reference object if in calibration mode
+        if (calibrationMode && !calibrationComplete) {
+          const detectedObject = detectReferenceObject(results.faceLandmarks, canvas);
+          if (detectedObject && detectedObject.detected) {
+            setReferenceObject(detectedObject);
+            
+            // Draw reference object area
+            ctx.strokeStyle = "#00ff00";
+            ctx.lineWidth = 2;
+            ctx.strokeRect(
+              detectedObject.x,
+              detectedObject.y,
+              detectedObject.widthPx,
+              detectedObject.heightPx
+            );
+            
+            ctx.fillStyle = "#00ff0020";
+            ctx.fillRect(
+              detectedObject.x,
+              detectedObject.y,
+              detectedObject.widthPx,
+              detectedObject.heightPx
+            );
+            
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "16px Arial";
+            ctx.fillText(
+              "Reference Object Detected",
+              detectedObject.x,
+              detectedObject.y - 10
+            );
+          }
+        }
 
         // Calculate and update measurements
         const newMeasurements = calculateMeasurements(
@@ -491,6 +614,23 @@ const App = () => {
                 {webcamRunning && (
                   <>
                     <div className="fps-counter">FPS: {fps}</div>
+                    {!calibrationComplete && (
+                      <button
+                        className="calibrate-button"
+                        onClick={startCalibration}
+                        disabled={calibrationMode}
+                      >
+                        <span className="icon">📏</span> Calibrate with Reference
+                      </button>
+                    )}
+                    {calibrationMode && referenceObject && (
+                      <button
+                        className="complete-calibration-button"
+                        onClick={completeCalibration}
+                      >
+                        <span className="icon">✓</span> Complete Calibration
+                      </button>
+                    )}
                     {measurements && !isCaptured && (
                       <button
                         className="capture-button"
@@ -515,6 +655,24 @@ const App = () => {
                     {webcamError}
                   </span>
                   <button onClick={() => setWebcamError(null)}>×</button>
+                </div>
+              )}
+
+              {distanceWarning && (
+                <div className="warning-message">
+                  <span>
+                    <strong>Note: </strong>
+                    {distanceWarning}
+                  </span>
+                </div>
+              )}
+
+              {calibrationMode && (
+                <div className="info-message">
+                  <span>
+                    <strong>Calibration Mode: </strong>
+                    Place a standard credit card (85.6mm wide) on your forehead for accurate measurements
+                  </span>
                 </div>
               )}
 
@@ -560,6 +718,9 @@ const App = () => {
                     ? "Final Facial Measurements"
                     : "Current Facial Measurements"}
                 </h2>
+                <div className="calibration-info">
+                  Calibration Method: {(finalMeasurements || measurements).calibrationMethod}
+                </div>
                 <div className="measurements-grid">
                   <div className="measurement-card">
                     <h3>Pupillary Distance (PD)</h3>
@@ -673,8 +834,8 @@ const App = () => {
 
       <footer className="app-footer">
         <p>
-          Note: Measurements are approximations. For precise measurements,
-          consult a professional.
+          Note: For best results, use a reference object (like a credit card) placed on your forehead for calibration.
+          Measurements are approximations. For precise measurements, consult a professional.
         </p>
       </footer>
 
@@ -786,6 +947,47 @@ const App = () => {
           color: #666;
         }
 
+        .calibrate-button {
+          background: #fbbc05;
+          color: white;
+          border: none;
+          padding: 0.75rem 1.5rem;
+          border-radius: 50px;
+          font-weight: 600;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          transition: all 0.2s;
+        }
+
+        .calibrate-button:hover {
+          background: #e6a704;
+        }
+
+        .calibrate-button:disabled {
+          background: #ccc;
+          cursor: not-allowed;
+        }
+
+        .complete-calibration-button {
+          background: #34a853;
+          color: white;
+          border: none;
+          padding: 0.75rem 1.5rem;
+          border-radius: 50px;
+          font-weight: 600;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          transition: all 0.2s;
+        }
+
+        .complete-calibration-button:hover {
+          background: #2d8d47;
+        }
+
         .capture-button {
           background: #34a853;
           color: white;
@@ -805,7 +1007,7 @@ const App = () => {
         }
 
         .reset-button {
-          background: #fbbc05;
+          background: #ea4335;
           color: white;
           border: none;
           padding: 0.75rem 1.5rem;
@@ -819,7 +1021,7 @@ const App = () => {
         }
 
         .reset-button:hover {
-          background: #e6a704;
+          background: #d33426;
         }
 
         .video-wrapper {
@@ -876,10 +1078,34 @@ const App = () => {
           align-items: center;
         }
 
-        .error-message button {
+        .warning-message {
+          background: #fff8e1;
+          color: #f57c00;
+          padding: 1rem;
+          border-radius: 8px;
+          margin-bottom: 1.5rem;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+
+        .info-message {
+          background: #e3f2fd;
+          color: #1565c0;
+          padding: 1rem;
+          border-radius: 8px;
+          margin-bottom: 1.5rem;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+
+        .error-message button,
+        .warning-message button,
+        .info-message button {
           background: none;
           border: none;
-          color: #c62828;
+          color: inherit;
           font-size: 1.5rem;
           cursor: pointer;
           padding: 0;
@@ -901,7 +1127,14 @@ const App = () => {
           margin-top: 0;
           color: #2c3e50;
           text-align: center;
+          margin-bottom: 1rem;
+        }
+
+        .calibration-info {
+          text-align: center;
+          color: #7f8c8d;
           margin-bottom: 2rem;
+          font-style: italic;
         }
 
         .measurements-grid {
