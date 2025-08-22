@@ -53,7 +53,7 @@ const App = () => {
   // Handle image click for detection
   const handleImageClick = async () => {
     if (!faceLandmarker || !imageRef.current) {
-      setError("Wait for faceLandmarker to load before clicking!");
+      setError("Face landmarker or image not loaded!");
       return;
     }
 
@@ -72,13 +72,13 @@ const App = () => {
       // Create new canvas for drawing landmarks
       const canvas = document.createElement('canvas');
       canvas.setAttribute('class', 'canvas');
-      canvas.setAttribute('width', imageRef.current.naturalWidth + 'px');
-      canvas.setAttribute('height', imageRef.current.naturalHeight + 'px');
+      canvas.width = imageRef.current.naturalWidth;
+      canvas.height = imageRef.current.naturalHeight;
+      canvas.style.position = 'absolute';
       canvas.style.left = '0px';
       canvas.style.top = '0px';
       canvas.style.width = `${imageRef.current.width}px`;
       canvas.style.height = `${imageRef.current.height}px`;
-      canvas.style.position = 'absolute';
 
       imageRef.current.parentNode.style.position = 'relative';
       imageRef.current.parentNode.appendChild(canvas);
@@ -142,6 +142,8 @@ const App = () => {
       // Update blend shapes
       if (faceLandmarkerResult.faceBlendshapes && faceLandmarkerResult.faceBlendshapes.length > 0) {
         setImageBlendShapes(faceLandmarkerResult.faceBlendshapes[0].categories);
+      } else {
+        setError("No face blend shapes detected in the image.");
       }
     } catch (error) {
       console.error("Error detecting face landmarks:", error);
@@ -152,7 +154,7 @@ const App = () => {
   // Toggle webcam
   const toggleWebcam = async () => {
     if (!faceLandmarker) {
-      setError("Wait! Face landmark detector not loaded yet.");
+      setError("Face landmark detector not loaded yet.");
       return;
     }
 
@@ -163,17 +165,32 @@ const App = () => {
       if (webcamRef.current && webcamRef.current.srcObject) {
         const tracks = webcamRef.current.srcObject.getTracks();
         tracks.forEach(track => track.stop());
+        webcamRef.current.srcObject = null; // Clear the stream
       }
     } else {
       setWebcamRunning(true);
       setWebcamError(null);
 
-      // Get webcam access
-      const constraints = { video: true };
+      // Get webcam access with explicit constraints
+      const constraints = {
+        video: {
+          facingMode: 'user', // Use front-facing camera
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        }
+      };
       try {
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        webcamRef.current.srcObject = stream;
-        webcamRef.current.addEventListener('loadeddata', predictWebcam);
+        if (webcamRef.current) {
+          webcamRef.current.srcObject = stream;
+          // Explicitly play the video
+          webcamRef.current.play().catch(err => {
+            setWebcamError(`Failed to play webcam stream: ${err.message}`);
+            setWebcamRunning(false);
+          });
+        } else {
+          throw new Error("Webcam reference not available.");
+        }
       } catch (error) {
         console.error("Error accessing webcam:", error);
         setWebcamError(`Failed to access webcam: ${error.message}`);
@@ -185,6 +202,7 @@ const App = () => {
   // Webcam prediction
   const predictWebcam = async () => {
     if (!webcamRunning || !webcamRef.current || !outputCanvasRef.current || !faceLandmarker) {
+      setWebcamError("Webcam, canvas, or face landmarker not ready.");
       return;
     }
 
@@ -193,21 +211,21 @@ const App = () => {
 
     // Check if video is ready
     if (video.videoWidth === 0 || video.videoHeight === 0) {
+      setWebcamError("Video stream not ready. Waiting for webcam to load...");
       requestAnimationFrame(predictWebcam);
       return;
     }
 
     try {
+      // Set video and canvas dimensions
       const radio = video.videoHeight / video.videoWidth;
       const videoWidth = 480;
-
-      // Set video and canvas dimensions
-      video.style.width = videoWidth + "px";
-      video.style.height = videoWidth * radio + "px";
-      canvas.style.width = videoWidth + "px";
-      canvas.style.height = videoWidth * radio + "px";
+      video.style.width = `${videoWidth}px`;
+      video.style.height = `${videoWidth * radio}px`;
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
+      canvas.style.width = `${videoWidth}px`;
+      canvas.style.height = `${videoWidth * radio}px`;
 
       // Set running mode to VIDEO if needed
       if (runningMode === "IMAGE") {
@@ -217,7 +235,7 @@ const App = () => {
 
       // Detect face landmarks
       let startTimeMs = performance.now();
-      const results = faceLandmarker.detectForVideo(video, startTimeMs);
+      const results = await faceLandmarker.detectForVideo(video, startTimeMs);
       const ctx = canvas.getContext('2d');
       const drawingUtils = new DrawingUtils(ctx);
 
@@ -273,23 +291,38 @@ const App = () => {
             { color: "#30FF30" }
           );
         }
+      } else {
+        setWebcamError("No face detected in webcam feed.");
       }
 
       // Update blend shapes
       if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
         setVideoBlendShapes(results.faceBlendshapes[0].categories);
+      } else {
+        setVideoBlendShapes([]);
       }
     } catch (error) {
       console.error("Error during webcam prediction:", error);
-      setWebcamError(`Webcam error: ${error.message}`);
-      setWebcamRunning(false);
+      setWebcamError(`Webcam prediction error: ${error.message}`);
     }
 
-    // Call this function again to keep predicting when the browser is ready
+    // Continue predicting if webcam is still running
     if (webcamRunning) {
       requestAnimationFrame(predictWebcam);
     }
   };
+
+  // Start webcam prediction when video is loaded
+  useEffect(() => {
+    if (webcamRunning && webcamRef.current) {
+      webcamRef.current.addEventListener('loadeddata', predictWebcam);
+      return () => {
+        if (webcamRef.current) {
+          webcamRef.current.removeEventListener('loadeddata', predictWebcam);
+        }
+      };
+    }
+  }, [webcamRunning]);
 
   // Check if webcam is supported
   const hasGetUserMedia = () => {
@@ -323,18 +356,23 @@ const App = () => {
 
       {/* Error Display */}
       {error && (
-        <div style={{
-          padding: '10px',
-          backgroundColor: '#ffebee',
-          color: '#c62828',
-          border: '1px solid #ef9a9a',
-          borderRadius: '4px',
-          marginBottom: '15px'
-        }}>
-          <strong>Error: </strong>{error}
+        <div
+          style={{
+            padding: '10px',
+            backgroundColor: '#ffebee',
+            color: '#c62828',
+            border: '1px solid #ef9a9a',
+            borderRadius: '4px',
+            marginBottom: '15px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}
+        >
+          <span><strong>Error: </strong>{error}</span>
           <button
             onClick={() => setError(null)}
-            style={{ marginLeft: '10px', background: 'none', border: 'none', color: '#c62828', cursor: 'pointer' }}
+            style={{ background: 'none', border: 'none', color: '#c62828', cursor: 'pointer' }}
           >
             ×
           </button>
@@ -345,13 +383,15 @@ const App = () => {
         <div>
           <p>Loading model...</p>
           <div style={{ width: '100%', height: '4px', backgroundColor: '#e0e0e0', borderRadius: '2px' }}>
-            <div style={{
-              width: '100%',
-              height: '100%',
-              backgroundColor: '#4285f4',
-              borderRadius: '2px',
-              animation: 'loading 1.5s infinite ease-in-out'
-            }}></div>
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                backgroundColor: '#4285f4',
+                borderRadius: '2px',
+                animation: 'loading 1.5s infinite ease-in-out'
+              }}
+            ></div>
           </div>
         </div>
       ) : (
@@ -387,29 +427,34 @@ const App = () => {
           </p>
 
           {webcamError && (
-            <div style={{
-              padding: '10px',
-              backgroundColor: '#ffebee',
-              color: '#c62828',
-              border: '1px solid #ef9a9a',
-              borderRadius: '4px',
-              marginBottom: '15px'
-            }}>
-              <strong>Webcam Error: </strong>{webcamError}
+            <div
+              style={{
+                padding: '10px',
+                backgroundColor: '#ffebee',
+                color: '#c62828',
+                border: '1px solid #ef9a9a',
+                borderRadius: '4px',
+                marginBottom: '15px',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}
+            >
+              <span><strong>Webcam Error: </strong>{webcamError}</span>
               <button
                 onClick={() => setWebcamError(null)}
-                style={{ marginLeft: '10px', background: 'none', border: 'none', color: '#c62828', cursor: 'pointer' }}
+                style={{ background: 'none', border: 'none', color: '#c62828', cursor: 'pointer' }}
               >
                 ×
               </button>
             </div>
           )}
 
-          <div id="liveView" className="videoView">
+          <div id="liveView" className="videoView" style={{ position: 'relative', width: '480px', height: '360px' }}>
             <button
               className="mdc-button mdc-button--raised"
               onClick={toggleWebcam}
-              disabled={!hasGetUserMedia()}
+              disabled={!hasGetUserMedia() || isModelLoading}
               style={{
                 padding: '10px 15px',
                 backgroundColor: webcamRunning ? '#f44336' : '#4285f4',
@@ -429,17 +474,43 @@ const App = () => {
               </p>
             )}
 
-            <div style={{ position: 'relative', width: '480px', height: '360px', backgroundColor: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div
+              style={{
+                position: 'relative',
+                width: '100%',
+                height: '100%',
+                backgroundColor: '#f5f5f5',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                overflow: 'hidden'
+              }}
+            >
               <video
                 ref={webcamRef}
-                style={{ position: 'absolute', left: 0, top: 0, display: webcamRunning ? 'block' : 'none' }}
                 autoPlay
                 playsInline
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
+                  display: webcamRunning ? 'block' : 'none'
+                }}
               ></video>
               <canvas
                 ref={outputCanvasRef}
                 className="output_canvas"
-                style={{ position: 'absolute', left: '0px', top: '0px', zIndex: 10 }}
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  top: 0,
+                  width: '100%',
+                  height: '100%',
+                  zIndex: 10
+                }}
               ></canvas>
 
               {!webcamRunning && (
@@ -468,7 +539,7 @@ const App = () => {
             max-height: 300px;
             overflow-y: auto;
             border: 1px solid #e0e0e0;
-            border-radius: 4px;
+            borderRadius: 4px;
             margin-top: 10px;
           }
 
