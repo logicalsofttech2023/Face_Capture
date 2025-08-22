@@ -9,7 +9,6 @@ const App = () => {
   const webcamRef = useRef(null);
   const outputCanvasRef = useRef(null);
   const instructionsRef = useRef(null);
-  const calibrationCanvasRef = useRef(null);
 
   // State
   const [faceLandmarker, setFaceLandmarker] = useState(null);
@@ -24,7 +23,7 @@ const App = () => {
   const [hasReference, setHasReference] = useState(false);
   const [capturedImage, setCapturedImage] = useState(null);
   const [cameraLoading, setCameraLoading] = useState(false);
-  const [calibrationPoints, setCalibrationPoints] = useState([]);
+  const [referencePixelSize, setReferencePixelSize] = useState(null);
 
   // Initialize face landmarker
   useEffect(() => {
@@ -56,47 +55,6 @@ const App = () => {
     createFaceLandmarker();
   }, []);
 
-  // Handle webcam start/stop
-  useEffect(() => {
-    if (webcamRunning) {
-      const startWebcam = async () => {
-        setCameraLoading(true);
-        setWebcamError(null);
-        const constraints = {
-          video: {
-            facingMode: 'user',
-            width: { ideal: 640 },
-            height: { ideal: 480 }
-          }
-        };
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia(constraints);
-          if (webcamRef.current) {
-            webcamRef.current.srcObject = stream;
-            await new Promise((resolve, reject) => {
-              webcamRef.current.onloadedmetadata = resolve;
-              webcamRef.current.onerror = reject;
-              setTimeout(() => reject(new Error("Camera loading timeout.")), 5000);
-            });
-            await webcamRef.current.play();
-          }
-          setCameraLoading(false);
-        } catch (err) {
-          console.error("Error accessing webcam:", err);
-          setWebcamError(`Failed to access webcam: ${err.message}`);
-          setWebcamRunning(false);
-          setCameraLoading(false);
-        }
-      };
-      startWebcam();
-    } else {
-      if (webcamRef.current && webcamRef.current.srcObject) {
-        webcamRef.current.srcObject.getTracks().forEach(track => track.stop());
-        webcamRef.current.srcObject = null;
-      }
-    }
-  }, [webcamRunning]);
-
   // Handle image capture from webcam
   const captureImage = () => {
     if (!webcamRef.current) return;
@@ -111,61 +69,76 @@ const App = () => {
     const imageData = canvas.toDataURL('image/png');
     setCapturedImage(imageData);
     setWebcamRunning(false);
-    setCurrentStep(2); // Move to calibration
-  };
-
-  // Toggle webcam
-  const toggleWebcam = () => {
-    setWebcamRunning(prev => !prev);
-  };
-
-  // Draw calibration points
-  useEffect(() => {
-    if (calibrationCanvasRef.current && calibrationPoints.length > 0) {
-      const ctx = calibrationCanvasRef.current.getContext('2d');
-      ctx.clearRect(0, 0, calibrationCanvasRef.current.width, calibrationCanvasRef.current.height);
-      calibrationPoints.forEach(point => {
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, 10, 0, 2 * Math.PI);
-        ctx.fillStyle = 'red';
-        ctx.fill();
-      });
+    
+    // Stop webcam
+    if (webcamRef.current && webcamRef.current.srcObject) {
+      const tracks = webcamRef.current.srcObject.getTracks();
+      tracks.forEach(track => track.stop());
+      webcamRef.current.srcObject = null;
     }
-  }, [calibrationPoints]);
-
-  // Set up calibration canvas size
-  useEffect(() => {
-    if (capturedImage && imageRef.current && calibrationCanvasRef.current) {
-      const img = imageRef.current;
-      const canvas = calibrationCanvasRef.current;
-      canvas.width = img.naturalWidth;
-      canvas.height = img.naturalHeight;
-      canvas.style.width = `${img.width}px`;
-      canvas.style.height = `${img.height}px`;
-    }
-  }, [capturedImage]);
-
-  // Handle calibration click
-  const handleCalibrationClick = (e) => {
-    if (calibrationPoints.length >= 2) return;
-    const rect = e.target.getBoundingClientRect();
-    const scaleX = e.target.naturalWidth / rect.width;
-    const scaleY = e.target.naturalHeight / rect.height;
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top) * scaleY;
-    setCalibrationPoints(prev => [...prev, {x, y}]);
+    
+    setCurrentStep(4); // Move to analysis step
   };
 
-  // Proceed from calibration
-  const confirmCalibration = () => {
-    if (calibrationPoints.length !== 2) return;
-    const dist = calculateDistance(
-      calibrationPoints[0].x, calibrationPoints[0].y,
-      calibrationPoints[1].x, calibrationPoints[1].y
-    );
-    setReferenceObject(prev => ({ ...prev, pixelSize: dist }));
-    setCalibrationPoints([]);
-    setCurrentStep(3);
+  // Toggle webcam for capturing reference image
+  const toggleWebcam = async () => {
+    if (!faceLandmarker) {
+      setError("Face landmark detector not loaded yet.");
+      return;
+    }
+
+    if (webcamRunning) {
+      // Stop webcam
+      setWebcamRunning(false);
+      setWebcamError(null);
+      if (webcamRef.current && webcamRef.current.srcObject) {
+        const tracks = webcamRef.current.srcObject.getTracks();
+        tracks.forEach(track => track.stop());
+        webcamRef.current.srcObject = null;
+        webcamRef.current.pause();
+      }
+    } else {
+      // Start webcam
+      setCameraLoading(true);
+      setWebcamRunning(true);
+      setWebcamError(null);
+
+      const constraints = {
+        video: {
+          facingMode: 'user',
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        }
+      };
+      
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (webcamRef.current) {
+          if (webcamRef.current.srcObject) {
+            webcamRef.current.srcObject.getTracks().forEach(track => track.stop());
+          }
+          webcamRef.current.srcObject = stream;
+
+          await new Promise((resolve, reject) => {
+            webcamRef.current.onloadedmetadata = () => resolve();
+            webcamRef.current.onerror = () => reject(new Error("Failed to load webcam metadata."));
+            // Add timeout for loading metadata
+            setTimeout(() => reject(new Error("Camera loading timeout. Please try again.")), 5000);
+          });
+
+          await webcamRef.current.play();
+          setCurrentStep(3); // Move to capture step
+          setCameraLoading(false);
+        } else {
+          throw new Error("Webcam reference not available.");
+        }
+      } catch (error) {
+        console.error("Error accessing webcam:", error);
+        setWebcamError(`Failed to access webcam: ${error.message}`);
+        setWebcamRunning(false);
+        setCameraLoading(false);
+      }
+    }
   };
 
   // Analyze the captured image
@@ -270,7 +243,7 @@ const App = () => {
         // Calculate measurements
         const measurements = calculateMeasurements(faceLandmarkerResult.faceLandmarks[0], img);
         setAnalysisResults(measurements);
-        setCurrentStep(4); // Move to results step
+        setCurrentStep(5); // Move to results step
       } else {
         setError("No face detected in the image. Please try again.");
       }
@@ -282,8 +255,8 @@ const App = () => {
 
   // Calculate all required measurements
   const calculateMeasurements = (landmarks, image) => {
-    if (!referenceObject || referenceObject.pixelSize <= 0) {
-      return { error: "Reference object not calibrated properly" };
+    if (!hasReference || !referencePixelSize) {
+      return { error: "Reference object not detected or not measured" };
     }
 
     // Get key landmarks
@@ -324,7 +297,7 @@ const App = () => {
     const combinedPupilHeightPx = (leftPupilHeightPx + rightPupilHeightPx) / 2;
 
     // Convert to mm using reference object
-    const pxToMm = referenceObject.actualSize / referenceObject.pixelSize;
+    const pxToMm = referenceObject.actualSize / referencePixelSize;
     
     const leftEyeHeightMm = (leftEyeHeightPx * pxToMm).toFixed(1);
     const rightEyeHeightMm = (rightEyeHeightPx * pxToMm).toFixed(1);
@@ -337,8 +310,8 @@ const App = () => {
 
     // Determine face shape (simplified)
     const faceWidthPx = calculateDistance(
-      landmarks[234].x * image.width, landmarks[234].y * image.height, // Left cheek
-      landmarks[454].x * image.width, landmarks[454].y * image.height  // Right cheek
+      landmarks[234].x * image.width, landmarks[234].y * image.height, // Right side
+      landmarks[454].x * image.width, landmarks[454].y * image.height  // Left side
     );
     
     const faceHeightPx = calculateDistance(
@@ -351,7 +324,7 @@ const App = () => {
     
     if (faceRatio > 0.9) faceShape = "Round";
     else if (faceRatio < 0.7) faceShape = "Long";
-    else if (faceHeightPx > faceWidthPx * 1.2) faceShape = "Square";
+    else if (landmarks[152].y - landmarks[10].y > faceWidthPx * 1.2) faceShape = "Square";
 
     return {
       "Eye Opening Height": {
@@ -379,16 +352,9 @@ const App = () => {
 
   // Handle reference object selection
   const handleReferenceSelect = (object) => {
-    if (object.name === 'Custom') {
-      const size = prompt("Enter the size of your reference object in millimeters:");
-      if (size && !isNaN(size)) {
-        object.actualSize = parseFloat(size);
-      } else {
-        return;
-      }
-    }
-    setReferenceObject({ ...object, pixelSize: 0 });
+    setReferenceObject(object);
     setHasReference(true);
+    setCurrentStep(2); // Move to positioning step
   };
 
   // Check if webcam is supported
@@ -404,12 +370,32 @@ const App = () => {
     setHasReference(false);
     setReferenceObject(null);
     setWebcamRunning(false);
-    setCalibrationPoints([]);
+    setReferencePixelSize(null);
     
     if (webcamRef.current && webcamRef.current.srcObject) {
-      webcamRef.current.srcObject.getTracks().forEach(track => track.stop());
+      const tracks = webcamRef.current.srcObject.getTracks();
+      tracks.forEach(track => track.stop());
       webcamRef.current.srcObject = null;
     }
+  };
+
+  // Measure reference object
+  const measureReferenceObject = () => {
+    if (!capturedImage) return;
+    
+    const img = new Image();
+    img.src = capturedImage;
+    
+    img.onload = () => {
+      const size = prompt(`Please measure the width of your ${referenceObject.name} in pixels. Use any image editing tool to measure the width.`);
+      
+      if (size && !isNaN(size)) {
+        setReferencePixelSize(parseFloat(size));
+        setCurrentStep(4); // Move to analysis step
+      } else {
+        setError("Please enter a valid number for the reference object size.");
+      }
+    };
   };
 
   return (
@@ -426,7 +412,7 @@ const App = () => {
           width: '100%', 
           zIndex: 1 
         }}></div>
-        {[1, 2, 3, 4].map(step => (
+        {[1, 2, 3, 4, 5].map(step => (
           <div key={step} style={{
             width: '30px',
             height: '30px',
@@ -446,10 +432,11 @@ const App = () => {
       </div>
       
       <div style={{ textAlign: 'center', marginBottom: '20px', fontSize: '14px' }}>
-        <span style={{ color: currentStep >= 1 ? '#4285f4' : '#aaa' }}>Setup</span> • 
-        <span style={{ color: currentStep >= 2 ? '#4285f4' : '#aaa' }}> Calibrate</span> • 
-        <span style={{ color: currentStep >= 3 ? '#4285f4' : '#aaa' }}> Analyze</span> • 
-        <span style={{ color: currentStep >= 4 ? '#4285f4' : '#aaa' }}> Results</span>
+        <span style={{ color: currentStep >= 1 ? '#4285f4' : '#aaa' }}>Reference</span> • 
+        <span style={{ color: currentStep >= 2 ? '#4285f4' : '#aaa' }}> Positioning</span> • 
+        <span style={{ color: currentStep >= 3 ? '#4285f4' : '#aaa' }}> Capture</span> • 
+        <span style={{ color: currentStep >= 4 ? '#4285f4' : '#aaa' }}> Analysis</span> • 
+        <span style={{ color: currentStep >= 5 ? '#4285f4' : '#aaa' }}> Results</span>
       </div>
 
       {/* Error Display */}
@@ -512,169 +499,178 @@ const App = () => {
         </div>
       ) : (
         <div>
-          {/* Step 1: Setup - Camera, Reference Selection, Instructions, Capture */}
+          {/* Step 1: Reference Object Selection */}
           {currentStep === 1 && (
             <div style={{ textAlign: 'center' }}>
-              <h2>Step 1: Setup Camera and Reference</h2>
-              <button 
-                onClick={toggleWebcam}
-                disabled={cameraLoading}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: '#4285f4',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  opacity: cameraLoading ? 0.7 : 1
-                }}
-              >
-                {cameraLoading ? 'Opening Camera...' : webcamRunning ? 'Close Camera' : 'Open Camera'}
-              </button>
-
-              {webcamRunning && (
-                <div style={{ marginTop: '20px' }}>
-                  <div id="liveView" style={{ position: 'relative', width: '640px', height: '480px', margin: '0 auto', backgroundColor: '#f5f5f5', borderRadius: '8px', overflow: 'hidden' }}>
-                    <video
-                      ref={webcamRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      style={{
-                        position: 'absolute',
-                        left: 0,
-                        top: 0,
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'cover'
-                      }}
-                    ></video>
-                  </div>
-
-                  <div style={{ marginTop: '20px' }}>
-                    <h3>Select Reference Object</h3>
-                    <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', margin: '20px 0', flexWrap: 'wrap' }}>
-                      <div 
-                        style={{ 
-                          border: referenceObject?.name === 'Credit Card' ? '2px solid #4285f4' : '1px solid #ddd', 
-                          borderRadius: '8px', 
-                          padding: '15px', 
-                          cursor: 'pointer',
-                          width: '150px'
-                        }}
-                        onClick={() => handleReferenceSelect({ name: 'Credit Card', actualSize: 85.6 })}
-                      >
-                        <div style={{ height: '90px', backgroundColor: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '5px' }}>
-                          <div style={{ width: '80px', height: '50px', backgroundColor: '#ddd', borderRadius: '5px' }}></div>
-                        </div>
-                        <p style={{ marginTop: '10px' }}>Credit Card</p>
-                        <p style={{ fontSize: '12px', color: '#666' }}>85.6 mm wide</p>
-                      </div>
-                      
-                      <div 
-                        style={{ 
-                          border: referenceObject?.name === 'Coin' ? '2px solid #4285f4' : '1px solid #ddd', 
-                          borderRadius: '8px', 
-                          padding: '15px', 
-                          cursor: 'pointer',
-                          width: '150px'
-                        }}
-                        onClick={() => handleReferenceSelect({ name: 'Coin', actualSize: 24.26 })}
-                      >
-                        <div style={{ height: '90px', backgroundColor: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '5px' }}>
-                          <div style={{ width: '40px', height: '40px', backgroundColor: '#ddd', borderRadius: '50%' }}></div>
-                        </div>
-                        <p style={{ marginTop: '10px' }}>Quarter</p>
-                        <p style={{ fontSize: '12px', color: '#666' }}>24.26 mm diameter</p>
-                      </div>
-                      
-                      <div 
-                        style={{ 
-                          border: referenceObject?.name === 'Custom' ? '2px solid #4285f4' : '1px solid #ddd', 
-                          borderRadius: '8px', 
-                          padding: '15px', 
-                          cursor: 'pointer',
-                          width: '150px'
-                        }}
-                        onClick={() => handleReferenceSelect({ name: 'Custom' })}
-                      >
-                        <div style={{ height: '90px', backgroundColor: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '5px' }}>
-                          <div style={{ fontSize: '30px' }}>+</div>
-                        </div>
-                        <p style={{ marginTop: '10px' }}>Custom</p>
-                        <p style={{ fontSize: '12px', color: '#666' }}>Specify size</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div ref={instructionsRef} style={{ 
-                    backgroundColor: '#e8f4f8', 
-                    padding: '20px', 
+              <h2>Step 1: Select Reference Object</h2>
+              <p>Please place a reference object of known size on your forehead or near your face.</p>
+              <p>This will be used to convert pixel measurements to millimeters.</p>
+              
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', margin: '30px 0', flexWrap: 'wrap' }}>
+                <div 
+                  style={{ 
+                    border: referenceObject?.name === 'Credit Card' ? '2px solid #4285f4' : '1px solid #ddd', 
                     borderRadius: '8px', 
-                    margin: '20px 0',
-                    textAlign: 'left'
-                  }}>
-                    <h3 style={{ color: '#2c3e50', marginTop: 0 }}>Important Instructions:</h3>
-                    <ul style={{ lineHeight: '1.6' }}>
-                      <li>Position your face straight, looking directly at the camera</li>
-                      <li>Keep your head upright with no tilt or rotation</li>
-                      <li>Ensure good lighting with both eyes clearly visible</li>
-                      <li>{hasReference ? `Place the ${referenceObject.name} (${referenceObject.actualSize} mm) on your forehead or near your head` : 'Select a reference object above and place it on your forehead or near your head'}</li>
-                      <li>Remove glasses or any obstructions</li>
-                      <li>Keep a neutral expression with eyes open</li>
-                    </ul>
+                    padding: '15px', 
+                    cursor: 'pointer',
+                    width: '150px'
+                  }}
+                  onClick={() => handleReferenceSelect({ name: 'Credit Card', actualSize: 85.6, pixelSize: 0 })}
+                >
+                  <div style={{ height: '90px', backgroundColor: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '5px' }}>
+                    <div style={{ width: '80px', height: '50px', backgroundColor: '#ddd', borderRadius: '5px' }}></div>
                   </div>
-
-                  <button 
-                    onClick={captureImage}
-                    disabled={!hasReference || cameraLoading}
-                    style={{
-                      padding: '10px 20px',
-                      backgroundColor: '#4285f4',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      opacity: hasReference && !cameraLoading ? 1 : 0.5,
-                      marginTop: '20px'
-                    }}
-                  >
-                    Capture Image
-                  </button>
+                  <p style={{ marginTop: '10px' }}>Credit Card</p>
+                  <p style={{ fontSize: '12px', color: '#666' }}>85.6 mm wide</p>
                 </div>
-              )}
+                
+                <div 
+                  style={{ 
+                    border: referenceObject?.name === 'Coin' ? '2px solid #4285f4' : '1px solid #ddd', 
+                    borderRadius: '8px', 
+                    padding: '15px', 
+                    cursor: 'pointer',
+                    width: '150px'
+                  }}
+                  onClick={() => handleReferenceSelect({ name: 'Coin', actualSize: 24.26, pixelSize: 0 })}
+                >
+                  <div style={{ height: '90px', backgroundColor: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '5px' }}>
+                    <div style={{ width: '40px', height: '40px', backgroundColor: '#ddd', borderRadius: '50%' }}></div>
+                  </div>
+                  <p style={{ marginTop: '10px' }}>Quarter</p>
+                  <p style={{ fontSize: '12px', color: '#666' }}>24.26 mm diameter</p>
+                </div>
+                
+                <div 
+                  style={{ 
+                    border: referenceObject?.name === 'Custom' ? '2px solid #4285f4' : '1px solid #ddd', 
+                    borderRadius: '8px', 
+                    padding: '15px', 
+                    cursor: 'pointer',
+                    width: '150px'
+                  }}
+                  onClick={() => {
+                    const name = prompt("Enter the name of your reference object:");
+                    const size = prompt("Enter the size of your reference object in millimeters:");
+                    if (name && size && !isNaN(size)) {
+                      handleReferenceSelect({ name, actualSize: parseFloat(size), pixelSize: 0 });
+                    }
+                  }}
+                >
+                  <div style={{ height: '90px', backgroundColor: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '5px' }}>
+                    <div style={{ fontSize: '30px' }}>+</div>
+                  </div>
+                  <p style={{ marginTop: '10px' }}>Custom</p>
+                  <p style={{ fontSize: '12px', color: '#666' }}>Specify size</p>
+                </div>
+              </div>
             </div>
           )}
 
-          {/* Step 2: Calibrate */}
+          {/* Step 2: Positioning Instructions */}
           {currentStep === 2 && (
             <div style={{ textAlign: 'center' }}>
-              <h2>Step 2: Calibrate Reference</h2>
-              <p>Click on the two ends of your {referenceObject.name} (e.g., left and right edges for card, ends of diameter for coin).</p>
-              
-              <div style={{ position: 'relative', display: 'inline-block', margin: '20px 0' }}>
-                <img 
-                  ref={imageRef}
-                  src={capturedImage} 
-                  alt="Captured" 
-                  onClick={handleCalibrationClick}
-                  style={{ maxWidth: '100%', cursor: 'crosshair', border: '1px solid #ddd', borderRadius: '8px' }} 
-                />
-                <canvas 
-                  ref={calibrationCanvasRef}
-                  style={{ position: 'absolute', left: 0, top: 0 }}
-                />
+              <h2>Step 2: Proper Positioning</h2>
+              <div ref={instructionsRef} style={{ 
+                backgroundColor: '#e8f4f8', 
+                padding: '20px', 
+                borderRadius: '8px', 
+                margin: '20px 0',
+                textAlign: 'left'
+              }}>
+                <h3 style={{ color: '#2c3e50', marginTop: 0 }}>Important Instructions:</h3>
+                <ul style={{ lineHeight: '1.6' }}>
+                  <li>Position your face straight, looking directly at the camera</li>
+                  <li>Keep your head upright with no tilt or rotation</li>
+                  <li>Ensure good lighting with both eyes clearly visible</li>
+                  <li>Place the <strong>{referenceObject.name}</strong> on your forehead or near your head</li>
+                  <li>Remove glasses or any obstructions</li>
+                  <li>Keep a neutral expression with eyes open</li>
+                </ul>
               </div>
               
-              <p>Points selected: {calibrationPoints.length}/2</p>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', marginTop: '30px' }}>
+                <button 
+                  onClick={() => setCurrentStep(1)}
+                  style={{
+                    padding: '10px 20px',
+                    backgroundColor: '#f5f5f5',
+                    color: '#333',
+                    border: '1px solid #ddd',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Back
+                </button>
+                <button 
+                  onClick={toggleWebcam}
+                  disabled={cameraLoading}
+                  style={{
+                    padding: '10px 20px',
+                    backgroundColor: '#4285f4',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    opacity: cameraLoading ? 0.7 : 1
+                  }}
+                >
+                  {cameraLoading ? 'Opening Camera...' : 'Open Camera'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Capture Image */}
+          {currentStep === 3 && (
+            <div style={{ textAlign: 'center' }}>
+              <h2>Step 3: Capture Image</h2>
+              <p>Position yourself according to the instructions and click "Capture" when ready.</p>
+              <p>Make sure your reference object ({referenceObject.name}) is clearly visible in the image.</p>
+              
+              <div id="liveView" className="videoView" style={{ position: 'relative', width: '640px', height: '480px', margin: '0 auto' }}>
+                <div style={{
+                  position: 'relative',
+                  width: '100%',
+                  height: '100%',
+                  backgroundColor: '#f5f5f5',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  overflow: 'hidden',
+                  borderRadius: '8px'
+                }}>
+                  <video
+                    ref={webcamRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                      display: webcamRunning ? 'block' : 'none'
+                    }}
+                  ></video>
+
+                  {!webcamRunning && (
+                    <div style={{ textAlign: 'center', color: '#9e9e9e' }}>
+                      <p>Webcam is disabled</p>
+                      <p>Click "Enable Webcam" to start</p>
+                    </div>
+                  )}
+                </div>
+              </div>
               
               <div style={{ display: 'flex', justifyContent: 'center', gap: '15px', marginTop: '20px' }}>
                 <button 
                   onClick={() => {
-                    setCapturedImage(null);
-                    setCalibrationPoints([]);
-                    setCurrentStep(1);
-                    setWebcamRunning(true);
+                    setWebcamRunning(false);
+                    setCurrentStep(2);
                   }}
                   style={{
                     padding: '10px 20px',
@@ -685,26 +681,11 @@ const App = () => {
                     cursor: 'pointer'
                   }}
                 >
-                  Retake
+                  Back
                 </button>
                 <button 
-                  onClick={() => setCalibrationPoints([])}
-                  disabled={calibrationPoints.length === 0}
-                  style={{
-                    padding: '10px 20px',
-                    backgroundColor: '#f5f5f5',
-                    color: '#333',
-                    border: '1px solid #ddd',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    opacity: calibrationPoints.length > 0 ? 1 : 0.5
-                  }}
-                >
-                  Reset Points
-                </button>
-                <button 
-                  onClick={confirmCalibration}
-                  disabled={calibrationPoints.length !== 2}
+                  onClick={captureImage}
+                  disabled={!webcamRunning}
                   style={{
                     padding: '10px 20px',
                     backgroundColor: '#4285f4',
@@ -712,20 +693,20 @@ const App = () => {
                     border: 'none',
                     borderRadius: '4px',
                     cursor: 'pointer',
-                    opacity: calibrationPoints.length === 2 ? 1 : 0.5
+                    opacity: webcamRunning ? 1 : 0.5
                   }}
                 >
-                  Proceed to Analysis
+                  Capture Image
                 </button>
               </div>
             </div>
           )}
 
-          {/* Step 3: Analyze */}
-          {currentStep === 3 && (
+          {/* Step 4: Reference Measurement */}
+          {currentStep === 4 && !referencePixelSize && (
             <div style={{ textAlign: 'center' }}>
-              <h2>Step 3: Analyze Image</h2>
-              <p>Review the captured image. Click "Analyze" to process.</p>
+              <h2>Step 4: Measure Reference Object</h2>
+              <p>We need to measure your reference object ({referenceObject.name}) in the image to calibrate the measurements.</p>
               
               <div style={{ width: '100%', margin: '30px 0' }}>
                 <img 
@@ -744,8 +725,8 @@ const App = () => {
                 <button 
                   onClick={() => {
                     setCapturedImage(null);
-                    setCurrentStep(1);
-                    setWebcamRunning(true);
+                    setCurrentStep(3);
+                    toggleWebcam();
                   }}
                   style={{
                     padding: '10px 20px',
@@ -757,6 +738,58 @@ const App = () => {
                   }}
                 >
                   Retake
+                </button>
+                <button 
+                  onClick={measureReferenceObject}
+                  style={{
+                    padding: '10px 20px',
+                    backgroundColor: '#4285f4',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Measure Reference
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 4: Analysis */}
+          {currentStep === 4 && referencePixelSize && (
+            <div style={{ textAlign: 'center' }}>
+              <h2>Step 4: Analyzing Image</h2>
+              <p>We're analyzing your facial features. This may take a few moments.</p>
+              
+              <div style={{ width: '100%', margin: '30px 0' }}>
+                <img 
+                  src={capturedImage} 
+                  alt="Captured" 
+                  style={{ 
+                    maxWidth: '100%', 
+                    maxHeight: '400px', 
+                    border: '1px solid #ddd', 
+                    borderRadius: '8px' 
+                  }} 
+                />
+              </div>
+              
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '15px' }}>
+                <button 
+                  onClick={() => {
+                    setReferencePixelSize(null);
+                  }}
+                  style={{
+                    padding: '10px 20px',
+                    backgroundColor: '#f5f5f5',
+                    color: '#333',
+                    border: '1px solid #ddd',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Remeasure Reference
                 </button>
                 <button 
                   onClick={analyzeImage}
@@ -775,10 +808,10 @@ const App = () => {
             </div>
           )}
 
-          {/* Step 4: Results */}
-          {currentStep === 4 && analysisResults && (
+          {/* Step 5: Results */}
+          {currentStep === 5 && analysisResults && (
             <div style={{ textAlign: 'center' }}>
-              <h2>Step 4: Analysis Results</h2>
+              <h2>Step 5: Analysis Results</h2>
               
               <div id="results-container" style={{ margin: '20px 0' }}></div>
               
