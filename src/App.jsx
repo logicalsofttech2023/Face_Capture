@@ -68,7 +68,6 @@ const App = () => {
     };
     
     // Calculate distance between two points in mm
-    // We need a reference measurement to convert pixels to mm
     // Using inter-pupillary distance as reference (approx 63mm for adults)
     const leftPupil = toPixels(landmark[468]); // Left eye center
     const rightPupil = toPixels(landmark[473]); // Right eye center
@@ -78,8 +77,16 @@ const App = () => {
       Math.pow(rightPupil.y - leftPupil.y, 2)
     );
     
-    // Assume average PD of 63mm for conversion
-    const pxToMm = 63 / pupilDistancePx;
+    // More accurate PD calculation using multiple reference points
+    const leftEyeOuter = toPixels(landmark[33]);
+    const rightEyeOuter = toPixels(landmark[263]);
+    const eyeDistancePx = Math.sqrt(
+      Math.pow(rightEyeOuter.x - leftEyeOuter.x, 2) + 
+      Math.pow(rightEyeOuter.y - leftEyeOuter.y, 2)
+    );
+    
+    // Average of multiple reference measurements for better accuracy
+    const pxToMm = 63 / ((pupilDistancePx + eyeDistancePx/1.5) / 2);
     
     // Calculate PD (Pupillary Distance)
     const pd = pupilDistancePx * pxToMm;
@@ -114,20 +121,54 @@ const App = () => {
     const rightEyeOuter = toPixels(landmark[263]); // Right eye outer corner
     const rightPupilHeight = Math.abs(rightPupil.y - (rightEyeInner.y + rightEyeOuter.y) / 2) * pxToMm;
     
-    // Determine face shape (simplified)
+    // Enhanced face shape detection
+    const jawLeft = toPixels(landmark[234]); // Left jaw
+    const jawRight = toPixels(landmark[454]); // Right jaw
+    const forehead = toPixels(landmark[10]); // Forehead center
+    const chin = toPixels(landmark[152]); // Chin
+    
     const jawWidth = Math.sqrt(
-      Math.pow(toPixels(landmark[234]).x - toPixels(landmark[454]).x, 2)
+      Math.pow(jawRight.x - jawLeft.x, 2)
     ) * pxToMm;
     
     const faceHeight = Math.sqrt(
-      Math.pow(toPixels(landmark[10]).y - toPixels(landmark[152]).y, 2)
+      Math.pow(forehead.y - chin.y, 2)
     ) * pxToMm;
     
+    // Cheekbone width
+    const leftCheek = toPixels(landmark[123]);
+    const rightCheek = toPixels(landmark[352]);
+    const cheekboneWidth = Math.sqrt(
+      Math.pow(rightCheek.x - leftCheek.x, 2)
+    ) * pxToMm;
+    
+    // Forehead width
+    const leftTemple = toPixels(landmark[127]);
+    const rightTemple = toPixels(landmark[356]);
+    const foreheadWidth = Math.sqrt(
+      Math.pow(rightTemple.x - leftTemple.x, 2)
+    ) * pxToMm;
+    
+    // Calculate ratios for face shape classification
     const faceRatio = jawWidth / faceHeight;
+    const cheekboneJawRatio = cheekboneWidth / jawWidth;
+    const foreheadJawRatio = foreheadWidth / jawWidth;
+    
     let faceShape = "Oval";
     
-    if (faceRatio > 0.85) faceShape = "Round";
-    if (faceRatio < 0.75) faceShape = "Long";
+    if (faceRatio > 0.85 && cheekboneJawRatio > 0.95) {
+      faceShape = "Round";
+    } else if (faceRatio < 0.75) {
+      faceShape = "Long/Oblong";
+    } else if (faceRatio > 0.85 && foreheadJawRatio < 0.85) {
+      faceShape = "Triangle";
+    } else if (Math.abs(cheekboneWidth - jawWidth) < 5 && Math.abs(jawWidth - foreheadWidth) < 5) {
+      faceShape = "Square";
+    } else if (cheekboneWidth > jawWidth && foreheadWidth > jawWidth) {
+      faceShape = "Heart";
+    } else if (cheekboneWidth > foreheadWidth && cheekboneWidth > jawWidth) {
+      faceShape = "Diamond";
+    }
     
     return {
       pd: pd.toFixed(1),
@@ -144,7 +185,9 @@ const App = () => {
         right: rightPupilHeight.toFixed(1),
         combined: ((leftPupilHeight + rightPupilHeight) / 2).toFixed(1)
       },
-      faceShape
+      faceShape,
+      faceWidth: jawWidth.toFixed(1),
+      faceHeight: faceHeight.toFixed(1)
     };
   };
 
@@ -258,14 +301,15 @@ const App = () => {
       
       // Draw landmarks if face detected
       if (results.faceLandmarks && results.faceLandmarks.length > 0) {
-        const drawingUtils = new DrawingUtils(ctx);
-        
         // Calculate and update measurements
         const newMeasurements = calculateMeasurements(results.faceLandmarks, canvas);
         if (newMeasurements) {
           setMeasurements(newMeasurements);
         }
 
+        // Create DrawingUtils instance
+        const drawingUtils = new DrawingUtils(ctx);
+        
         // Draw face landmarks with minimal styling for measurement purposes
         for (const landmarks of results.faceLandmarks) {
           drawingUtils.drawConnectors(
@@ -294,10 +338,21 @@ const App = () => {
             { color: "#34a853", lineWidth: 2 }
           );
           
-          // Draw measurement points
-          drawingUtils.drawCircle(landmarks[468], { color: "#ea4335", radius: 3 }); // Left pupil
-          drawingUtils.drawCircle(landmarks[473], { color: "#ea4335", radius: 3 }); // Right pupil
-          drawingUtils.drawCircle(landmarks[4], { color: "#fbbc05", radius: 3 }); // Nose tip
+          // Draw measurement points using manual circles
+          const drawCircle = (point, color, radius) => {
+            const pixelPoint = {
+              x: point.x * canvas.width,
+              y: point.y * canvas.height
+            };
+            ctx.beginPath();
+            ctx.arc(pixelPoint.x, pixelPoint.y, radius, 0, 2 * Math.PI);
+            ctx.fillStyle = color;
+            ctx.fill();
+          };
+          
+          drawCircle(landmarks[468], "#ea4335", 3); // Left pupil
+          drawCircle(landmarks[473], "#ea4335", 3); // Right pupil
+          drawCircle(landmarks[4], "#fbbc05", 3); // Nose tip
         }
       } else {
         setWebcamError("No face detected. Please position your face in the frame.");
@@ -488,6 +543,21 @@ const App = () => {
                     <div className="measurement-value shape">{measurements.faceShape}</div>
                     <p className="measurement-desc">Classification based on proportions</p>
                   </div>
+
+                  <div className="measurement-card">
+                    <h3>Face Dimensions</h3>
+                    <div className="measurement-subvalues">
+                      <div>
+                        <span className="label">Width:</span>
+                        <span className="value">{measurements.faceWidth} mm</span>
+                      </div>
+                      <div>
+                        <span className="label">Height:</span>
+                        <span className="value">{measurements.faceHeight} mm</span>
+                      </div>
+                    </div>
+                    <p className="measurement-desc">Overall face size</p>
+                  </div>
                 </div>
               </div>
             )}
@@ -620,6 +690,7 @@ const App = () => {
           width: 100%;
           height: 100%;
           object-fit: cover;
+          transform: scaleX(-1); /* Mirror the video and canvas */
         }
         
         .measurement-canvas {
