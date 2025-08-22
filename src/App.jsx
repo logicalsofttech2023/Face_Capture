@@ -5,26 +5,23 @@ const App = () => {
   const { FaceLandmarker, FilesetResolver, DrawingUtils } = vision;
 
   // Refs
-  const imageRef = useRef(null);
   const webcamRef = useRef(null);
   const outputCanvasRef = useRef(null);
 
   // State
   const [faceLandmarker, setFaceLandmarker] = useState(null);
-  const [runningMode, setRunningMode] = useState('IMAGE');
   const [webcamRunning, setWebcamRunning] = useState(false);
-  const [imageBlendShapes, setImageBlendShapes] = useState([]);
-  const [videoBlendShapes, setVideoBlendShapes] = useState([]);
   const [isModelLoading, setIsModelLoading] = useState(true);
   const [error, setError] = useState(null);
   const [webcamError, setWebcamError] = useState(null);
-  const [fps, setFps] = useState(0); // Added for performance debugging
+  const [fps, setFps] = useState(0);
+  const [measurements, setMeasurements] = useState(null);
 
-  // Performance optimization: Throttle frame processing
+  // Performance optimization
   const lastFrameTimeRef = useRef(0);
   const frameCountRef = useRef(0);
   const lastFpsUpdateRef = useRef(0);
-  const minFrameInterval = 100; // Process every ~100ms (10 FPS cap)
+  const minFrameInterval = 100;
 
   // Initialize face landmarker
   useEffect(() => {
@@ -38,10 +35,10 @@ const App = () => {
         const landmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
           baseOptions: {
             modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
-            delegate: "GPU" // Ensure GPU delegate for better performance
+            delegate: "GPU"
           },
-          outputFaceBlendshapes: true,
-          runningMode: runningMode,
+          outputFaceBlendshapes: false,
+          runningMode: "VIDEO",
           numFaces: 1
         });
         setFaceLandmarker(landmarker);
@@ -56,111 +53,105 @@ const App = () => {
     createFaceLandmarker();
   }, []);
 
-  // Handle image click for detection
-  const handleImageClick = async () => {
-    if (!faceLandmarker || !imageRef.current) {
-      setError("Face landmarker or image not loaded!");
-      return;
-    }
-
-    try {
-      if (runningMode === "VIDEO") {
-        await faceLandmarker.setOptions({ runningMode: "IMAGE" });
-        setRunningMode("IMAGE");
-      }
-
-      // Remove any existing canvas
-      const existingCanvas = document.querySelector('.canvas');
-      if (existingCanvas) {
-        existingCanvas.remove();
-      }
-
-      // Create new canvas for drawing landmarks
-      const canvas = document.createElement('canvas');
-      canvas.setAttribute('class', 'canvas');
-      canvas.width = imageRef.current.naturalWidth;
-      canvas.height = imageRef.current.naturalHeight;
-      canvas.style.position = 'absolute';
-      canvas.style.left = '0px';
-      canvas.style.top = '0px';
-      canvas.style.width = `${imageRef.current.width}px`;
-      canvas.style.height = `${imageRef.current.height}px`;
-
-      imageRef.current.parentNode.style.position = 'relative';
-      imageRef.current.parentNode.appendChild(canvas);
-      const ctx = canvas.getContext('2d');
-      const drawingUtils = new DrawingUtils(ctx);
-
-      // Detect face landmarks
-      const faceLandmarkerResult = faceLandmarker.detect(imageRef.current);
-
-      // Draw landmarks
-      if (faceLandmarkerResult.faceLandmarks) {
-        for (const landmarks of faceLandmarkerResult.faceLandmarks) {
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_TESSELATION,
-            { color: "#C0C0C070", lineWidth: 1 }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE,
-            { color: "#FF3030" }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW,
-            { color: "#FF3030" }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_LEFT_EYE,
-            { color: "#30FF30" }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_LEFT_EYEBROW,
-            { color: "#30FF30" }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_FACE_OVAL,
-            { color: "#E0E0E0" }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_LIPS,
-            { color: "#E0E0E0" }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS,
-            { color: "#FF3030" }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS,
-            { color: "#30FF30" }
-          );
-        }
-      }
-
-      // Update blend shapes
-      if (faceLandmarkerResult.faceBlendshapes && faceLandmarkerResult.faceBlendshapes.length > 0) {
-        setImageBlendShapes(faceLandmarkerResult.faceBlendshapes[0].categories);
-      } else {
-        setError("No face blend shapes detected in the image.");
-      }
-    } catch (error) {
-      console.error("Error detecting face landmarks:", error);
-      setError(`Failed to detect face landmarks: ${error.message}`);
-    }
+  // Calculate measurements from landmarks
+  const calculateMeasurements = (landmarks, canvas) => {
+    if (!landmarks || landmarks.length === 0) return null;
+    
+    const landmark = landmarks[0];
+    
+    // Convert normalized coordinates to pixel coordinates
+    const toPixels = (point) => {
+      return {
+        x: point.x * canvas.width,
+        y: point.y * canvas.height
+      };
+    };
+    
+    // Calculate distance between two points in mm
+    // We need a reference measurement to convert pixels to mm
+    // Using inter-pupillary distance as reference (approx 63mm for adults)
+    const leftPupil = toPixels(landmark[468]); // Left eye center
+    const rightPupil = toPixels(landmark[473]); // Right eye center
+    
+    const pupilDistancePx = Math.sqrt(
+      Math.pow(rightPupil.x - leftPupil.x, 2) + 
+      Math.pow(rightPupil.y - leftPupil.y, 2)
+    );
+    
+    // Assume average PD of 63mm for conversion
+    const pxToMm = 63 / pupilDistancePx;
+    
+    // Calculate PD (Pupillary Distance)
+    const pd = pupilDistancePx * pxToMm;
+    
+    // Calculate NPD (Naso-Pupillary Distance)
+    const noseTip = toPixels(landmark[4]); // Nose tip
+    const leftNpd = Math.sqrt(
+      Math.pow(leftPupil.x - noseTip.x, 2) + 
+      Math.pow(leftPupil.y - noseTip.y, 2)
+    ) * pxToMm;
+    
+    const rightNpd = Math.sqrt(
+      Math.pow(rightPupil.x - noseTip.x, 2) + 
+      Math.pow(rightPupil.y - noseTip.y, 2)
+    ) * pxToMm;
+    
+    // Calculate eye opening height
+    const leftEyeTop = toPixels(landmark[159]); // Left eye top
+    const leftEyeBottom = toPixels(landmark[145]); // Left eye bottom
+    const leftEyeHeight = Math.abs(leftEyeTop.y - leftEyeBottom.y) * pxToMm;
+    
+    const rightEyeTop = toPixels(landmark[386]); // Right eye top
+    const rightEyeBottom = toPixels(landmark[374]); // Right eye bottom
+    const rightEyeHeight = Math.abs(rightEyeTop.y - rightEyeBottom.y) * pxToMm;
+    
+    // Calculate pupil height (relative to eye corners)
+    const leftEyeInner = toPixels(landmark[133]); // Left eye inner corner
+    const leftEyeOuter = toPixels(landmark[33]); // Left eye outer corner
+    const leftPupilHeight = Math.abs(leftPupil.y - (leftEyeInner.y + leftEyeOuter.y) / 2) * pxToMm;
+    
+    const rightEyeInner = toPixels(landmark[362]); // Right eye inner corner
+    const rightEyeOuter = toPixels(landmark[263]); // Right eye outer corner
+    const rightPupilHeight = Math.abs(rightPupil.y - (rightEyeInner.y + rightEyeOuter.y) / 2) * pxToMm;
+    
+    // Determine face shape (simplified)
+    const jawWidth = Math.sqrt(
+      Math.pow(toPixels(landmark[234]).x - toPixels(landmark[454]).x, 2)
+    ) * pxToMm;
+    
+    const faceHeight = Math.sqrt(
+      Math.pow(toPixels(landmark[10]).y - toPixels(landmark[152]).y, 2)
+    ) * pxToMm;
+    
+    const faceRatio = jawWidth / faceHeight;
+    let faceShape = "Oval";
+    
+    if (faceRatio > 0.85) faceShape = "Round";
+    if (faceRatio < 0.75) faceShape = "Long";
+    
+    return {
+      pd: pd.toFixed(1),
+      npd: {
+        left: leftNpd.toFixed(1),
+        right: rightNpd.toFixed(1)
+      },
+      eyeHeight: {
+        left: leftEyeHeight.toFixed(1),
+        right: rightEyeHeight.toFixed(1)
+      },
+      pupilHeight: {
+        left: leftPupilHeight.toFixed(1),
+        right: rightPupilHeight.toFixed(1),
+        combined: ((leftPupilHeight + rightPupilHeight) / 2).toFixed(1)
+      },
+      faceShape
+    };
   };
 
   // Toggle webcam
   const toggleWebcam = async () => {
     if (!faceLandmarker) {
-      setError("Face landmark detector not loaded yet.");
+      setError("Face measurement model not loaded yet.");
       return;
     }
 
@@ -168,6 +159,7 @@ const App = () => {
       // Stop webcam
       setWebcamRunning(false);
       setWebcamError(null);
+      setMeasurements(null);
       if (webcamRef.current && webcamRef.current.srcObject) {
         const tracks = webcamRef.current.srcObject.getTracks();
         tracks.forEach(track => track.stop());
@@ -182,8 +174,8 @@ const App = () => {
       const constraints = {
         video: {
           facingMode: 'user',
-          width: { ideal: 320 }, // Reduced resolution for better performance
-          height: { ideal: 240 }
+          width: { ideal: 640 },
+          height: { ideal: 480 }
         }
       };
       try {
@@ -214,12 +206,11 @@ const App = () => {
   // Webcam prediction with throttling
   const predictWebcam = async () => {
     if (!webcamRunning || !webcamRef.current || !outputCanvasRef.current || !faceLandmarker) {
-      setWebcamError("Webcam, canvas, or face landmarker not ready.");
+      setWebcamError("Webcam, canvas, or face measurement model not ready.");
       return;
     }
 
     const currentTime = performance.now();
-    // Throttle processing to ~10 FPS
     if (currentTime - lastFrameTimeRef.current < minFrameInterval) {
       requestAnimationFrame(predictWebcam);
       return;
@@ -237,7 +228,6 @@ const App = () => {
     const video = webcamRef.current;
     const canvas = outputCanvasRef.current;
 
-    // Check if video is ready
     if (video.videoWidth === 0 || video.videoHeight === 0 || video.paused || video.ended) {
       setWebcamError("Video stream not ready or paused. Waiting for webcam to load...");
       requestAnimationFrame(predictWebcam);
@@ -247,19 +237,13 @@ const App = () => {
     try {
       // Set video and canvas dimensions
       const radio = video.videoHeight / video.videoWidth;
-      const videoWidth = 320; // Match reduced resolution
+      const videoWidth = 640;
       video.style.width = `${videoWidth}px`;
       video.style.height = `${videoWidth * radio}px`;
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       canvas.style.width = `${videoWidth}px`;
       canvas.style.height = `${videoWidth * radio}px`;
-
-      // Set running mode to VIDEO if needed
-      if (runningMode === "IMAGE") {
-        await faceLandmarker.setOptions({ runningMode: "VIDEO" });
-        setRunningMode("VIDEO");
-      }
 
       // Detect face landmarks
       const startTimeMs = performance.now();
@@ -269,81 +253,61 @@ const App = () => {
         throw new Error("Failed to get canvas 2D context.");
       }
 
-      // Clear canvas only if face detected to reduce unnecessary rendering
-      if (results.faceLandmarks) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw landmarks if face detected
+      if (results.faceLandmarks && results.faceLandmarks.length > 0) {
         const drawingUtils = new DrawingUtils(ctx);
+        
+        // Calculate and update measurements
+        const newMeasurements = calculateMeasurements(results.faceLandmarks, canvas);
+        if (newMeasurements) {
+          setMeasurements(newMeasurements);
+        }
 
-        // Draw landmarks
+        // Draw face landmarks with minimal styling for measurement purposes
         for (const landmarks of results.faceLandmarks) {
           drawingUtils.drawConnectors(
             landmarks,
             FaceLandmarker.FACE_LANDMARKS_TESSELATION,
-            { color: "#C0C0C070", lineWidth: 1 }
+            { color: "#C0C0C030", lineWidth: 1 }
           );
           drawingUtils.drawConnectors(
             landmarks,
             FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE,
-            { color: "#FF3030" }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW,
-            { color: "#FF3030" }
+            { color: "#4285f4", lineWidth: 2 }
           );
           drawingUtils.drawConnectors(
             landmarks,
             FaceLandmarker.FACE_LANDMARKS_LEFT_EYE,
-            { color: "#30FF30" }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_LEFT_EYEBROW,
-            { color: "#30FF30" }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_FACE_OVAL,
-            { color: "#E0E0E0" }
-          );
-          drawingUtils.drawConnectors(
-            landmarks,
-            FaceLandmarker.FACE_LANDMARKS_LIPS,
-            { color: "#E0E0E0" }
+            { color: "#4285f4", lineWidth: 2 }
           );
           drawingUtils.drawConnectors(
             landmarks,
             FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS,
-            { color: "#FF3030" }
+            { color: "#34a853", lineWidth: 2 }
           );
           drawingUtils.drawConnectors(
             landmarks,
             FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS,
-            { color: "#30FF30" }
+            { color: "#34a853", lineWidth: 2 }
           );
+          
+          // Draw measurement points
+          drawingUtils.drawCircle(landmarks[468], { color: "#ea4335", radius: 3 }); // Left pupil
+          drawingUtils.drawCircle(landmarks[473], { color: "#ea4335", radius: 3 }); // Right pupil
+          drawingUtils.drawCircle(landmarks[4], { color: "#fbbc05", radius: 3 }); // Nose tip
         }
       } else {
-        setWebcamError("No face detected in webcam feed.");
-      }
-
-      // Update blend shapes only if significant change to reduce re-renders
-      if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
-        const newBlendShapes = results.faceBlendshapes[0].categories;
-        setVideoBlendShapes(prev => {
-          const isSignificantChange = !prev.length || newBlendShapes.some((shape, i) => 
-            Math.abs((prev[i]?.score || 0) - shape.score) > 0.01
-          );
-          return isSignificantChange ? newBlendShapes : prev;
-        });
-      } else {
-        setVideoBlendShapes([]);
+        setWebcamError("No face detected. Please position your face in the frame.");
+        setMeasurements(null);
       }
     } catch (error) {
-      console.error("Error during webcam prediction:", error);
-      setWebcamError(`Webcam prediction error: ${error.message}`);
+      console.error("Error during face measurement:", error);
+      setWebcamError(`Measurement error: ${error.message}`);
     }
 
-    // Continue predicting if webcam is still running
     if (webcamRunning) {
       requestAnimationFrame(predictWebcam);
     }
@@ -375,256 +339,431 @@ const App = () => {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   };
 
-  // Render blend shapes
-  const renderBlendShapes = (blendShapes) => {
-    return (
-      <ul className="blend-shapes-list">
-        {blendShapes.map((shape, index) => (
-          <li key={index} className="blend-shapes-item">
-            <span className="blend-shapes-label">
-              {shape.displayName || shape.categoryName}
-            </span>
-            <span
-              className="blend-shapes-value"
-              style={{ width: `calc(${Number(shape.score) * 100}% - 120px)` }}
-            >
-              {Number(shape.score).toFixed(4)}
-            </span>
-          </li>
-        ))}
-      </ul>
-    );
-  };
-
   return (
-    <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>
-      <h1>Face Landmark Detection</h1>
+    <div className="app-container">
+      <header className="app-header">
+        <h1>Face Measurement Analysis</h1>
+        <p>Get precise facial measurements using AI technology</p>
+      </header>
 
-      {/* FPS Display for Debugging */}
-      {webcamRunning && (
-        <div style={{ marginBottom: '10px', color: '#555' }}>
-          FPS: {fps}
-        </div>
-      )}
-
-      {/* Error Display */}
-      {error && (
-        <div
-          style={{
-            padding: '10px',
-            backgroundColor: '#ffebee',
-            color: '#c62828',
-            border: '1px solid #ef9a9a',
-            borderRadius: '4px',
-            marginBottom: '15px',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center'
-          }}
-        >
-          <span><strong>Error: </strong>{error}</span>
-          <button
-            onClick={() => setError(null)}
-            style={{ background: 'none', border: 'none', color: '#c62828', cursor: 'pointer' }}
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      {isModelLoading ? (
-        <div>
-          <p>Loading model...</p>
-          <div style={{ width: '100%', height: '4px', backgroundColor: '#e0e0e0', borderRadius: '2px' }}>
-            <div
-              style={{
-                width: '100%',
-                height: '100%',
-                backgroundColor: '#4285f4',
-                borderRadius: '2px',
-                animation: 'loading 1.5s infinite ease-in-out'
-              }}
-            ></div>
+      <main className="app-main">
+        {/* Error Display */}
+        {error && (
+          <div className="error-message">
+            <span><strong>Error: </strong>{error}</span>
+            <button onClick={() => setError(null)}>×</button>
           </div>
-        </div>
-      ) : (
-        <section>
-          <h2>Demo: Detecting Images</h2>
-          <p><b>Click on the image below</b> to see the key landmarks of the face.</p>
+        )}
 
-          <div className="detectOnClick" style={{ position: 'relative', display: 'inline-block' }}>
-            <img
-              ref={imageRef}
-              src="https://storage.googleapis.com/mediapipe-assets/portrait.jpg"
-              crossOrigin="anonymous"
-              title="Click to get detection!"
-              onClick={handleImageClick}
-              alt="Face for detection"
-              style={{ cursor: 'pointer', display: 'block', width: '100%' }}
-            />
+        {isModelLoading ? (
+          <div className="loading-container">
+            <div className="loading-spinner"></div>
+            <p>Loading measurement model...</p>
           </div>
+        ) : (
+          <section className="measurement-section">
+            <div className="webcam-container">
+              <div className="webcam-controls">
+                <button
+                  className={`webcam-toggle ${webcamRunning ? 'active' : ''}`}
+                  onClick={toggleWebcam}
+                  disabled={!hasGetUserMedia()}
+                >
+                  {webcamRunning ? (
+                    <>
+                      <span className="icon">●</span> Stop Measurement
+                    </>
+                  ) : (
+                    <>
+                      <span className="icon">▶</span> Start Measurement
+                    </>
+                  )}
+                </button>
+                
+                {webcamRunning && (
+                  <div className="fps-counter">
+                    FPS: {fps}
+                  </div>
+                )}
+              </div>
 
-          {imageBlendShapes.length > 0 && (
-            <div className="blend-shapes">
-              <h3>Detected Facial Expressions:</h3>
-              {renderBlendShapes(imageBlendShapes)}
-            </div>
-          )}
-
-          <h2>Demo: Webcam Continuous Face Landmarks Detection</h2>
-          <p>
-            Hold your face in front of your webcam to get real-time face landmarker detection.
-            <br />
-            Click <b>enable webcam</b> below and grant access to the webcam if prompted.
-          </p>
-
-          {webcamError && (
-            <div
-              style={{
-                padding: '10px',
-                backgroundColor: '#ffebee',
-                color: '#c62828',
-                border: '1px solid #ef9a9a',
-                borderRadius: '4px',
-                marginBottom: '15px',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center'
-              }}
-            >
-              <span><strong>Webcam Error: </strong>{webcamError}</span>
-              <button
-                onClick={() => setWebcamError(null)}
-                style={{ background: 'none', border: 'none', color: '#c62828', cursor: 'pointer' }}
-              >
-                ×
-              </button>
-            </div>
-          )}
-
-          <div id="liveView" className="videoView" style={{ position: 'relative', width: '320px', height: '240px' }}>
-            <button
-              className="mdc-button mdc-button--raised"
-              onClick={toggleWebcam}
-              disabled={!hasGetUserMedia() || isModelLoading}
-              style={{
-                padding: '10px 15px',
-                backgroundColor: webcamRunning ? '#f44336' : '#4285f4',
-                color: 'white',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                marginBottom: '10px'
-              }}
-            >
-              {webcamRunning ? 'DISABLE WEBCAM' : 'ENABLE WEBCAM'}
-            </button>
-
-            {!hasGetUserMedia() && (
-              <p style={{ color: '#f44336' }}>
-                Your browser does not support webcam access. Please try Chrome, Firefox, or Edge.
-              </p>
-            )}
-
-            <div
-              style={{
-                position: 'relative',
-                width: '100%',
-                height: '100%',
-                backgroundColor: '#f5f5f5',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                overflow: 'hidden'
-              }}
-            >
-              <video
-                ref={webcamRef}
-                autoPlay
-                playsInline
-                muted
-                style={{
-                  position: 'absolute',
-                  left: 0,
-                  top: 0,
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover',
-                  display: webcamRunning ? 'block' : 'none'
-                }}
-              ></video>
-              <canvas
-                ref={outputCanvasRef}
-                className="output_canvas"
-                style={{
-                  position: 'absolute',
-                  left: 0,
-                  top: 0,
-                  width: '100%',
-                  height: '100%',
-                  zIndex: 10
-                }}
-              ></canvas>
-
-              {!webcamRunning && (
-                <div style={{ textAlign: 'center', color: '#9e9e9e' }}>
-                  <p>Webcam is disabled</p>
-                  <p>Click "Enable Webcam" to start</p>
+              {webcamError && (
+                <div className="error-message">
+                  <span><strong>Webcam Error: </strong>{webcamError}</span>
+                  <button onClick={() => setWebcamError(null)}>×</button>
                 </div>
               )}
+
+              <div className="video-wrapper">
+                <video
+                  ref={webcamRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="webcam-feed"
+                  style={{ display: webcamRunning ? 'block' : 'none' }}
+                ></video>
+                <canvas
+                  ref={outputCanvasRef}
+                  className="measurement-canvas"
+                ></canvas>
+
+                {!webcamRunning && (
+                  <div className="webcam-placeholder">
+                    <div className="placeholder-icon">👤</div>
+                    <p>Webcam is disabled</p>
+                    <p>Click "Start Measurement" to begin</p>
+                  </div>
+                )}
+              </div>
+
+              {!hasGetUserMedia() && (
+                <p className="browser-warning">
+                  Your browser does not support webcam access. Please try Chrome, Firefox, or Edge.
+                </p>
+              )}
             </div>
-          </div>
 
-          {videoBlendShapes.length > 0 && (
-            <div className="blend-shapes">
-              <h3>Real-time Facial Expressions:</h3>
-              {renderBlendShapes(videoBlendShapes)}
-            </div>
-          )}
-        </section>
-      )}
+            {measurements && (
+              <div className="measurements-results">
+                <h2>Facial Measurements</h2>
+                <div className="measurements-grid">
+                  <div className="measurement-card">
+                    <h3>Pupillary Distance (PD)</h3>
+                    <div className="measurement-value">{measurements.pd} mm</div>
+                    <p className="measurement-desc">Distance between pupils</p>
+                  </div>
+                  
+                  <div className="measurement-card">
+                    <h3>Naso-Pupillary Distance (NPD)</h3>
+                    <div className="measurement-subvalues">
+                      <div>
+                        <span className="label">Left Eye:</span>
+                        <span className="value">{measurements.npd.left} mm</span>
+                      </div>
+                      <div>
+                        <span className="label">Right Eye:</span>
+                        <span className="value">{measurements.npd.right} mm</span>
+                      </div>
+                    </div>
+                    <p className="measurement-desc">Distance from nose to each pupil</p>
+                  </div>
+                  
+                  <div className="measurement-card">
+                    <h3>Eye Opening Height</h3>
+                    <div className="measurement-subvalues">
+                      <div>
+                        <span className="label">Left Eye:</span>
+                        <span className="value">{measurements.eyeHeight.left} mm</span>
+                      </div>
+                      <div>
+                        <span className="label">Right Eye:</span>
+                        <span className="value">{measurements.eyeHeight.right} mm</span>
+                      </div>
+                    </div>
+                    <p className="measurement-desc">Vertical opening of eyes</p>
+                  </div>
+                  
+                  <div className="measurement-card">
+                    <h3>Pupil Height</h3>
+                    <div className="measurement-subvalues">
+                      <div>
+                        <span className="label">Left Eye:</span>
+                        <span className="value">{measurements.pupilHeight.left} mm</span>
+                      </div>
+                      <div>
+                        <span className="label">Right Eye:</span>
+                        <span className="value">{measurements.pupilHeight.right} mm</span>
+                      </div>
+                      <div>
+                        <span className="label">Combined:</span>
+                        <span className="value">{measurements.pupilHeight.combined} mm</span>
+                      </div>
+                    </div>
+                    <p className="measurement-desc">Vertical position of pupils</p>
+                  </div>
+                  
+                  <div className="measurement-card">
+                    <h3>Face Shape</h3>
+                    <div className="measurement-value shape">{measurements.faceShape}</div>
+                    <p className="measurement-desc">Classification based on proportions</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+      </main>
 
-      <style>
-        {`
-          .blend-shapes-list {
-            list-style: none;
-            padding: 0;
-            max-height: 300px;
-            overflow-y: auto;
-            border: 1px solid #e0e0e0;
-            borderRadius: 4px;
-            margin-top: 10px;
+      <footer className="app-footer">
+        <p>Note: Measurements are approximations. For precise measurements, consult a professional.</p>
+      </footer>
+
+      <style jsx>{`
+        .app-container {
+          min-height: 100vh;
+          background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .app-header {
+          text-align: center;
+          padding: 2rem 1rem;
+          background: white;
+          box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .app-header h1 {
+          margin: 0;
+          color: #2c3e50;
+          font-size: 2.5rem;
+        }
+        
+        .app-header p {
+          margin: 0.5rem 0 0;
+          color: #7f8c8d;
+          font-size: 1.1rem;
+        }
+        
+        .app-main {
+          max-width: 1200px;
+          margin: 0 auto;
+          padding: 2rem 1rem;
+        }
+        
+        .loading-container {
+          text-align: center;
+          padding: 3rem;
+        }
+        
+        .loading-spinner {
+          width: 50px;
+          height: 50px;
+          border: 5px solid #e3e3e3;
+          border-top: 5px solid #3498db;
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
+          margin: 0 auto 1rem;
+        }
+        
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        
+        .webcam-container {
+          background: white;
+          border-radius: 12px;
+          padding: 1.5rem;
+          box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+          margin-bottom: 2rem;
+        }
+        
+        .webcam-controls {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 1rem;
+        }
+        
+        .webcam-toggle {
+          background: #4285f4;
+          color: white;
+          border: none;
+          padding: 0.75rem 1.5rem;
+          border-radius: 50px;
+          font-weight: 600;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          transition: all 0.2s;
+        }
+        
+        .webcam-toggle:hover {
+          background: #3367d6;
+        }
+        
+        .webcam-toggle.active {
+          background: #ea4335;
+        }
+        
+        .webcam-toggle:disabled {
+          background: #ccc;
+          cursor: not-allowed;
+        }
+        
+        .fps-counter {
+          background: #f1f1f1;
+          padding: 0.5rem 1rem;
+          border-radius: 20px;
+          font-size: 0.9rem;
+          color: #666;
+        }
+        
+        .video-wrapper {
+          position: relative;
+          width: 100%;
+          height: 480px;
+          background: #000;
+          border-radius: 8px;
+          overflow: hidden;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        
+        .webcam-feed, .measurement-canvas {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+        
+        .measurement-canvas {
+          z-index: 10;
+        }
+        
+        .webcam-placeholder {
+          text-align: center;
+          color: #bbb;
+          z-index: 1;
+        }
+        
+        .placeholder-icon {
+          font-size: 4rem;
+          margin-bottom: 1rem;
+        }
+        
+        .browser-warning {
+          color: #e74c3c;
+          margin-top: 1rem;
+          text-align: center;
+        }
+        
+        .error-message {
+          background: #ffebee;
+          color: #c62828;
+          padding: 1rem;
+          border-radius: 8px;
+          margin-bottom: 1.5rem;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        
+        .error-message button {
+          background: none;
+          border: none;
+          color: #c62828;
+          font-size: 1.5rem;
+          cursor: pointer;
+          padding: 0;
+          width: 30px;
+          height: 30px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        
+        .measurements-results {
+          background: white;
+          border-radius: 12px;
+          padding: 2rem;
+          box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        
+        .measurements-results h2 {
+          margin-top: 0;
+          color: #2c3e50;
+          text-align: center;
+          margin-bottom: 2rem;
+        }
+        
+        .measurements-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+          gap: 1.5rem;
+        }
+        
+        .measurement-card {
+          background: #f8f9fa;
+          border-radius: 10px;
+          padding: 1.5rem;
+          text-align: center;
+          border-left: 4px solid #4285f4;
+        }
+        
+        .measurement-card h3 {
+          margin-top: 0;
+          color: #2c3e50;
+          font-size: 1.1rem;
+        }
+        
+        .measurement-value {
+          font-size: 2rem;
+          font-weight: bold;
+          color: #4285f4;
+          margin: 1rem 0;
+        }
+        
+        .measurement-value.shape {
+          font-size: 1.5rem;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          color: #34a853;
+        }
+        
+        .measurement-subvalues {
+          margin: 1rem 0;
+        }
+        
+        .measurement-subvalues div {
+          display: flex;
+          justify-content: space-between;
+          margin-bottom: 0.5rem;
+        }
+        
+        .measurement-subvalues .label {
+          color: #7f8c8d;
+        }
+        
+        .measurement-subvalues .value {
+          font-weight: bold;
+          color: #4285f4;
+        }
+        
+        .measurement-desc {
+          color: #7f8c8d;
+          font-size: 0.9rem;
+          margin: 0;
+        }
+        
+        .app-footer {
+          text-align: center;
+          padding: 1.5rem;
+          color: #7f8c8d;
+          font-size: 0.9rem;
+          background: white;
+          border-top: 1px solid #eee;
+        }
+        
+        @media (max-width: 768px) {
+          .app-header h1 {
+            font-size: 2rem;
           }
-
-          .blend-shapes-item {
-            display: flex;
-            justify-content: space-between;
-            padding: 8px 12px;
-            border-bottom: 1px solid #eeeeee;
+          
+          .video-wrapper {
+            height: 360px;
           }
-
-          .blend-shapes-item:last-child {
-            border-bottom: none;
+          
+          .measurements-grid {
+            grid-template-columns: 1fr;
           }
-
-          .blend-shapes-label {
-            width: 120px;
-            font-weight: bold;
-          }
-
-          .blend-shapes-value {
-            background-color: #e3f2fd;
-            padding: 2px 8px;
-            border-radius: 4px;
-            text-align: right;
-          }
-
-          @keyframes loading {
-            0% { transform: translateX(-100%); }
-            100% { transform: translateX(100%); }
-          }
-        `}
-      </style>
+        }
+      `}</style>
     </div>
   );
 };
