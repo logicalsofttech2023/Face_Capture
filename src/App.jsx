@@ -7,7 +7,6 @@ const App = () => {
   // Refs
   const imageRef = useRef(null);
   const webcamRef = useRef(null);
-  const canvasRef = useRef(null);
   const outputCanvasRef = useRef(null);
 
   // State
@@ -159,22 +158,23 @@ const App = () => {
     }
 
     if (webcamRunning) {
+      // Stop webcam
       setWebcamRunning(false);
       setWebcamError(null);
-      // Stop webcam stream
       if (webcamRef.current && webcamRef.current.srcObject) {
         const tracks = webcamRef.current.srcObject.getTracks();
         tracks.forEach(track => track.stop());
         webcamRef.current.srcObject = null; // Clear the stream
+        webcamRef.current.pause(); // Ensure video is paused
       }
     } else {
+      // Start webcam
       setWebcamRunning(true);
       setWebcamError(null);
 
-      // Get webcam access with explicit constraints
       const constraints = {
         video: {
-          facingMode: 'user', // Use front-facing camera
+          facingMode: 'user',
           width: { ideal: 640 },
           height: { ideal: 480 }
         }
@@ -182,12 +182,19 @@ const App = () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         if (webcamRef.current) {
+          // Ensure no previous stream is active
+          if (webcamRef.current.srcObject) {
+            webcamRef.current.srcObject.getTracks().forEach(track => track.stop());
+          }
           webcamRef.current.srcObject = stream;
-          // Explicitly play the video
-          webcamRef.current.play().catch(err => {
-            setWebcamError(`Failed to play webcam stream: ${err.message}`);
-            setWebcamRunning(false);
+
+          // Wait for the video to be ready before playing
+          await new Promise((resolve, reject) => {
+            webcamRef.current.onloadedmetadata = () => resolve();
+            webcamRef.current.onerror = () => reject(new Error("Failed to load webcam metadata."));
           });
+
+          await webcamRef.current.play();
         } else {
           throw new Error("Webcam reference not available.");
         }
@@ -210,8 +217,8 @@ const App = () => {
     const canvas = outputCanvasRef.current;
 
     // Check if video is ready
-    if (video.videoWidth === 0 || video.videoHeight === 0) {
-      setWebcamError("Video stream not ready. Waiting for webcam to load...");
+    if (video.videoWidth === 0 || video.videoHeight === 0 || video.paused || video.ended) {
+      setWebcamError("Video stream not ready or paused. Waiting for webcam to load...");
       requestAnimationFrame(predictWebcam);
       return;
     }
@@ -234,9 +241,12 @@ const App = () => {
       }
 
       // Detect face landmarks
-      let startTimeMs = performance.now();
+      const startTimeMs = performance.now();
       const results = await faceLandmarker.detectForVideo(video, startTimeMs);
       const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error("Failed to get canvas 2D context.");
+      }
       const drawingUtils = new DrawingUtils(ctx);
 
       // Clear canvas
@@ -314,11 +324,20 @@ const App = () => {
 
   // Start webcam prediction when video is loaded
   useEffect(() => {
+    let animationFrameId;
     if (webcamRunning && webcamRef.current) {
-      webcamRef.current.addEventListener('loadeddata', predictWebcam);
+      const onLoadedData = () => {
+        if (webcamRunning) {
+          animationFrameId = requestAnimationFrame(predictWebcam);
+        }
+      };
+      webcamRef.current.addEventListener('loadeddata', onLoadedData);
       return () => {
         if (webcamRef.current) {
-          webcamRef.current.removeEventListener('loadeddata', predictWebcam);
+          webcamRef.current.removeEventListener('loadeddata', onLoadedData);
+        }
+        if (animationFrameId) {
+          cancelAnimationFrame(animationFrameId);
         }
       };
     }
@@ -490,6 +509,7 @@ const App = () => {
                 ref={webcamRef}
                 autoPlay
                 playsInline
+                muted // Added to comply with autoplay policies
                 style={{
                   position: 'absolute',
                   left: 0,
