@@ -18,6 +18,13 @@ const App = () => {
   const [isModelLoading, setIsModelLoading] = useState(true);
   const [error, setError] = useState(null);
   const [webcamError, setWebcamError] = useState(null);
+  const [fps, setFps] = useState(0); // Added for performance debugging
+
+  // Performance optimization: Throttle frame processing
+  const lastFrameTimeRef = useRef(0);
+  const frameCountRef = useRef(0);
+  const lastFpsUpdateRef = useRef(0);
+  const minFrameInterval = 100; // Process every ~100ms (10 FPS cap)
 
   // Initialize face landmarker
   useEffect(() => {
@@ -31,7 +38,7 @@ const App = () => {
         const landmarker = await FaceLandmarker.createFromOptions(filesetResolver, {
           baseOptions: {
             modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
-            delegate: "GPU"
+            delegate: "GPU" // Ensure GPU delegate for better performance
           },
           outputFaceBlendshapes: true,
           runningMode: runningMode,
@@ -164,8 +171,8 @@ const App = () => {
       if (webcamRef.current && webcamRef.current.srcObject) {
         const tracks = webcamRef.current.srcObject.getTracks();
         tracks.forEach(track => track.stop());
-        webcamRef.current.srcObject = null; // Clear the stream
-        webcamRef.current.pause(); // Ensure video is paused
+        webcamRef.current.srcObject = null;
+        webcamRef.current.pause();
       }
     } else {
       // Start webcam
@@ -175,20 +182,18 @@ const App = () => {
       const constraints = {
         video: {
           facingMode: 'user',
-          width: { ideal: 640 },
-          height: { ideal: 480 }
+          width: { ideal: 320 }, // Reduced resolution for better performance
+          height: { ideal: 240 }
         }
       };
       try {
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         if (webcamRef.current) {
-          // Ensure no previous stream is active
           if (webcamRef.current.srcObject) {
             webcamRef.current.srcObject.getTracks().forEach(track => track.stop());
           }
           webcamRef.current.srcObject = stream;
 
-          // Wait for the video to be ready before playing
           await new Promise((resolve, reject) => {
             webcamRef.current.onloadedmetadata = () => resolve();
             webcamRef.current.onerror = () => reject(new Error("Failed to load webcam metadata."));
@@ -206,11 +211,27 @@ const App = () => {
     }
   };
 
-  // Webcam prediction
+  // Webcam prediction with throttling
   const predictWebcam = async () => {
     if (!webcamRunning || !webcamRef.current || !outputCanvasRef.current || !faceLandmarker) {
       setWebcamError("Webcam, canvas, or face landmarker not ready.");
       return;
+    }
+
+    const currentTime = performance.now();
+    // Throttle processing to ~10 FPS
+    if (currentTime - lastFrameTimeRef.current < minFrameInterval) {
+      requestAnimationFrame(predictWebcam);
+      return;
+    }
+    lastFrameTimeRef.current = currentTime;
+
+    // Update FPS counter
+    frameCountRef.current += 1;
+    if (currentTime - lastFpsUpdateRef.current >= 1000) {
+      setFps(frameCountRef.current);
+      frameCountRef.current = 0;
+      lastFpsUpdateRef.current = currentTime;
     }
 
     const video = webcamRef.current;
@@ -226,7 +247,7 @@ const App = () => {
     try {
       // Set video and canvas dimensions
       const radio = video.videoHeight / video.videoWidth;
-      const videoWidth = 480;
+      const videoWidth = 320; // Match reduced resolution
       video.style.width = `${videoWidth}px`;
       video.style.height = `${videoWidth * radio}px`;
       canvas.width = video.videoWidth;
@@ -247,13 +268,13 @@ const App = () => {
       if (!ctx) {
         throw new Error("Failed to get canvas 2D context.");
       }
-      const drawingUtils = new DrawingUtils(ctx);
 
-      // Clear canvas
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // Draw landmarks
+      // Clear canvas only if face detected to reduce unnecessary rendering
       if (results.faceLandmarks) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const drawingUtils = new DrawingUtils(ctx);
+
+        // Draw landmarks
         for (const landmarks of results.faceLandmarks) {
           drawingUtils.drawConnectors(
             landmarks,
@@ -305,9 +326,15 @@ const App = () => {
         setWebcamError("No face detected in webcam feed.");
       }
 
-      // Update blend shapes
+      // Update blend shapes only if significant change to reduce re-renders
       if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
-        setVideoBlendShapes(results.faceBlendshapes[0].categories);
+        const newBlendShapes = results.faceBlendshapes[0].categories;
+        setVideoBlendShapes(prev => {
+          const isSignificantChange = !prev.length || newBlendShapes.some((shape, i) => 
+            Math.abs((prev[i]?.score || 0) - shape.score) > 0.01
+          );
+          return isSignificantChange ? newBlendShapes : prev;
+        });
       } else {
         setVideoBlendShapes([]);
       }
@@ -372,6 +399,13 @@ const App = () => {
   return (
     <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>
       <h1>Face Landmark Detection</h1>
+
+      {/* FPS Display for Debugging */}
+      {webcamRunning && (
+        <div style={{ marginBottom: '10px', color: '#555' }}>
+          FPS: {fps}
+        </div>
+      )}
 
       {/* Error Display */}
       {error && (
@@ -469,7 +503,7 @@ const App = () => {
             </div>
           )}
 
-          <div id="liveView" className="videoView" style={{ position: 'relative', width: '480px', height: '360px' }}>
+          <div id="liveView" className="videoView" style={{ position: 'relative', width: '320px', height: '240px' }}>
             <button
               className="mdc-button mdc-button--raised"
               onClick={toggleWebcam}
@@ -509,7 +543,7 @@ const App = () => {
                 ref={webcamRef}
                 autoPlay
                 playsInline
-                muted // Added to comply with autoplay policies
+                muted
                 style={{
                   position: 'absolute',
                   left: 0,
