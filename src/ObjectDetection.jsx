@@ -1,215 +1,229 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { ObjectDetector, FilesetResolver } from '@mediapipe/tasks-vision';
 import './ObjectDetection.css';
 
 const ObjectDetection = () => {
-  const webcamRef = useRef(null);
+  const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const objectDetectorRef = useRef(null);
   const [isWebcamEnabled, setIsWebcamEnabled] = useState(false);
-  const [detectedObjects, setDetectedObjects] = useState([]);
-  const [selectedObject, setSelectedObject] = useState(null);
-  const [isModelLoading, setIsModelLoading] = useState(true);
+  const [objectWidth, setObjectWidth] = useState(null);
+  const [isOpenCVLoaded, setIsOpenCVLoaded] = useState(false);
+  const [processing, setProcessing] = useState(false);
 
-  // Initialize the object detector
+  // Load OpenCV.js
   useEffect(() => {
-    const initializeObjectDetector = async () => {
-      try {
-        setIsModelLoading(true);
-        const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.2/wasm"
-        );
-        objectDetectorRef.current = await ObjectDetector.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: `https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite`,
-            delegate: "GPU"
-          },
-          scoreThreshold: 0.5,
-          runningMode: "VIDEO"
-        });
-        setIsModelLoading(false);
-        console.log("Object detector initialized");
-      } catch (error) {
-        console.error("Error initializing object detector:", error);
-        setIsModelLoading(false);
-      }
+    // Check if OpenCV is already loaded
+    if (window.cv) {
+      setIsOpenCVLoaded(true);
+      return;
+    }
+
+    // Function to load OpenCV
+    const loadOpenCV = () => {
+      return new Promise((resolve, reject) => {
+        // Check if OpenCV is already loaded
+        if (window.cv) {
+          resolve();
+          return;
+        }
+
+        // Create script element
+        const script = document.createElement('script');
+        script.src = 'https://docs.opencv.org/4.x/opencv.js';
+        script.onload = () => {
+          // Wait for OpenCV to initialize
+          const checkCV = setInterval(() => {
+            if (window.cv && window.cv.Mat) {
+              clearInterval(checkCV);
+              setIsOpenCVLoaded(true);
+              resolve();
+            }
+          }, 50);
+        };
+        script.onerror = reject;
+        document.body.appendChild(script);
+      });
     };
 
-    initializeObjectDetector();
-
-    return () => {
-      if (objectDetectorRef.current) {
-        objectDetectorRef.current.close();
-      }
-    };
+    loadOpenCV().catch(error => {
+      console.error('Failed to load OpenCV:', error);
+    });
   }, []);
 
-  // Enable webcam and start detection
+  // Enable webcam
   const enableWebcam = async () => {
-    if (!objectDetectorRef.current) {
-      alert("Object Detector is still loading. Please try again.");
+    if (!isOpenCVLoaded) {
+      alert('OpenCV is still loading. Please wait.');
       return;
     }
 
-    // Check if webcam access is supported
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      alert("Webcam access is not supported by your browser");
-      return;
-    }
-
-    // Get usermedia parameters
-    const constraints = {
-      video: true
-    };
-
-    // Activate the webcam stream
     try {
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      webcamRef.current.srcObject = stream;
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      videoRef.current.srcObject = stream;
       setIsWebcamEnabled(true);
       
-      // Start prediction when video is loaded
-      webcamRef.current.addEventListener('loadeddata', predictWebcam);
+      // Start processing after a short delay to allow video to initialize
+      setTimeout(() => {
+        setProcessing(true);
+        processVideo();
+      }, 500);
     } catch (err) {
-      console.error("Error accessing webcam:", err);
-      alert("Error accessing webcam: " + err.message);
+      console.error('Error accessing webcam:', err);
+      alert('Error accessing webcam: ' + err.message);
     }
   };
 
-  // Prediction loop for webcam
-  const predictWebcam = async () => {
-    if (!objectDetectorRef.current || !webcamRef.current || !canvasRef.current) return;
+  // Process video frames
+  const processVideo = () => {
+    if (!videoRef.current || !canvasRef.current || !processing) return;
 
-    const video = webcamRef.current;
+    const video = videoRef.current;
     const canvas = canvasRef.current;
-    const canvasCtx = canvas.getContext('2d');
-    
+    const ctx = canvas.getContext('2d');
+
     // Set canvas dimensions to match video
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
 
-    // Now let's start detecting the stream
-    let startTimeMs = performance.now();
-    const detections = objectDetectorRef.current.detectForVideo(video, startTimeMs);
+    // Draw video frame to canvas
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Get image data from canvas
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     
-    // Clear previous drawings
-    canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+    // Create OpenCV Mat object
+    const src = new window.cv.Mat(imageData.height, imageData.width, window.cv.CV_8UC4);
+    src.data.set(imageData.data);
+
+    // Convert to grayscale
+    const gray = new window.cv.Mat();
+    window.cv.cvtColor(src, gray, window.cv.COLOR_RGBA2GRAY);
+
+    // Apply Gaussian blur to reduce noise
+    const blurred = new window.cv.Mat();
+    window.cv.GaussianBlur(gray, blurred, new window.cv.Size(5, 5), 0, 0, window.cv.BORDER_DEFAULT);
+
+    // Apply threshold to create binary image
+    const thresholded = new window.cv.Mat();
+    window.cv.threshold(blurred, thresholded, 0, 255, window.cv.THRESH_BINARY + window.cv.THRESH_OTSU);
+
+    // Find contours
+    const contours = new window.cv.MatVector();
+    const hierarchy = new window.cv.Mat();
+    window.cv.findContours(thresholded, contours, hierarchy, window.cv.RETR_EXTERNAL, window.cv.CHAIN_APPROX_SIMPLE);
+
+    // Find the largest contour (likely the object in hand)
+    let maxArea = 0;
+    let maxContour = null;
     
-    // Process and display detections
-    if (detections.detections && detections.detections.length > 0) {
-      const objects = [];
+    for (let i = 0; i < contours.size(); ++i) {
+      const contour = contours.get(i);
+      const area = window.cv.contourArea(contour);
       
-      detections.detections.forEach((detection, index) => {
-        const category = detection.categories[0];
-        const boundingBox = detection.boundingBox;
-        
-        // Draw bounding box
-        canvasCtx.strokeStyle = '#00FF00';
-        canvasCtx.lineWidth = 2;
-        canvasCtx.strokeRect(
-          boundingBox.originX, 
-          boundingBox.originY, 
-          boundingBox.width, 
-          boundingBox.height
-        );
-        
-        // Draw label background
-        canvasCtx.fillStyle = '#00FF00';
-        const text = `${category.categoryName} - ${Math.round(category.score * 100)}%`;
-        const textWidth = canvasCtx.measureText(text).width;
-        canvasCtx.fillRect(
-          boundingBox.originX - 1,
-          boundingBox.originY - 20,
-          textWidth + 4,
-          20
-        );
-        
-        // Draw text
-        canvasCtx.fillStyle = '#000000';
-        canvasCtx.font = '14px Arial';
-        canvasCtx.fillText(text, boundingBox.originX, boundingBox.originY - 5);
-        
-        // Store object data
-        objects.push({
-          id: index,
-          name: category.categoryName,
-          confidence: Math.round(category.score * 100),
-          width: boundingBox.width,
-          height: boundingBox.height,
-          x: boundingBox.originX,
-          y: boundingBox.originY
-        });
-      });
-      
-      setDetectedObjects(objects);
-    } else {
-      setDetectedObjects([]);
+      if (area > maxArea && area > 1000) { // Filter out small contours
+        maxArea = area;
+        maxContour = contour;
+      }
     }
 
-    // Call this function again to keep predicting when the browser is ready
-    if (isWebcamEnabled) {
-      requestAnimationFrame(predictWebcam);
+    // If a significant contour is found
+    if (maxContour) {
+      // Get bounding rectangle
+      const rect = window.cv.boundingRect(maxContour);
+      
+      // Draw rectangle on canvas
+      ctx.strokeStyle = '#00ff00';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+      
+      // Draw width text
+      ctx.fillStyle = '#00ff00';
+      ctx.font = '16px Arial';
+      ctx.fillText(`Width: ${rect.width}px`, rect.x, rect.y - 5);
+      
+      // Update state with width
+      setObjectWidth(rect.width);
+    }
+
+    // Clean up
+    src.delete();
+    gray.delete();
+    blurred.delete();
+    thresholded.delete();
+    contours.delete();
+    hierarchy.delete();
+
+    // Continue processing
+    if (processing) {
+      requestAnimationFrame(processVideo);
     }
   };
 
-  // Handle object selection
-  const handleObjectSelect = (object) => {
-    setSelectedObject(object);
+  // Stop processing
+  const stopProcessing = () => {
+    setProcessing(false);
+    setIsWebcamEnabled(false);
+    if (videoRef.current && videoRef.current.srcObject) {
+      const tracks = videoRef.current.srcObject.getTracks();
+      tracks.forEach(track => track.stop());
+    }
   };
 
   return (
     <div className="object-detection-container">
-      <h1>Object Detection with MediaPipe</h1>
-      <p>Hold objects up to your webcam to detect them and measure their width in pixels.</p>
-      
-      {isModelLoading && <div className="loading">Loading object detection model...</div>}
+      <h1>Object Width Detection with OpenCV.js</h1>
+      <p>Hold an object in your hand to detect its width in pixels.</p>
       
       <div className="webcam-container">
-        <video ref={webcamRef} className="webcam" autoPlay playsInline />
-        <canvas ref={canvasRef} className="canvas" />
+        <video 
+          ref={videoRef} 
+          className="webcam" 
+          autoPlay 
+          playsInline 
+          style={{ display: isWebcamEnabled ? 'block' : 'none' }} 
+        />
+        <canvas 
+          ref={canvasRef} 
+          className="canvas" 
+          style={{ display: isWebcamEnabled ? 'block' : 'none' }} 
+        />
         
         {!isWebcamEnabled && (
           <button 
             onClick={enableWebcam} 
-            disabled={isModelLoading}
+            disabled={!isOpenCVLoaded}
             className="enable-webcam-btn"
           >
-            {isModelLoading ? 'Loading Model...' : 'Enable Webcam'}
+            {isOpenCVLoaded ? 'Enable Webcam' : 'Loading OpenCV...'}
+          </button>
+        )}
+        
+        {isWebcamEnabled && (
+          <button onClick={stopProcessing} className="stop-webcam-btn">
+            Stop Webcam
           </button>
         )}
       </div>
       
       <div className="results-container">
-        <h2>Detected Objects</h2>
-        
-        {detectedObjects.length > 0 ? (
-          <div className="objects-list">
-            {detectedObjects.map((object) => (
-              <div 
-                key={object.id} 
-                className={`object-item ${selectedObject?.id === object.id ? 'selected' : ''}`}
-                onClick={() => handleObjectSelect(object)}
-              >
-                <div className="object-name">{object.name}</div>
-                <div className="object-confidence">{object.confidence}% confidence</div>
-                <div className="object-dimensions">
-                  Width: {Math.round(object.width)}px, Height: {Math.round(object.height)}px
-                </div>
-              </div>
-            ))}
+        <h2>Detection Results</h2>
+        {objectWidth !== null ? (
+          <div className="width-display">
+            <h3>Object Width:</h3>
+            <div className="width-value">{objectWidth} pixels</div>
           </div>
         ) : (
-          <p>No objects detected. Point your webcam at objects to detect them.</p>
+          <p>No object detected. Hold an object in front of the camera.</p>
         )}
         
-        {selectedObject && (
-          <div className="selected-object-info">
-            <h3>Selected Object: {selectedObject.name}</h3>
-            <p>Width: <strong>{Math.round(selectedObject.width)} pixels</strong></p>
-            <p>Height: {Math.round(selectedObject.height)} pixels</p>
-            <p>Confidence: {selectedObject.confidence}%</p>
-          </div>
-        )}
+        <div className="tips">
+          <h3>Tips for better detection:</h3>
+          <ul>
+            <li>Use a solid-colored background</li>
+            <li>Ensure good lighting</li>
+            <li>Hold the object with contrast to your hand</li>
+            <li>Keep the object still for a moment</li>
+          </ul>
+        </div>
       </div>
     </div>
   );
