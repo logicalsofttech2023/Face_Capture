@@ -14,7 +14,7 @@ const App = () => {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  const API_BASE_URL = "http://localhost:6005/api/user";
+  const API_BASE_URL = "http://157.66.191.24:6005/api/user";
   const token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY4ODhiMTIwNTI4Y2ZjMzQ2MTMzMzc2OCIsInBob25lIjoiOTg3NjU0MzIxMCIsInJvbGUiOiJ1c2VyIiwiaWF0IjoxNzU2MzcwMDE4LCJleHAiOjE3NTY5NzQ4MTh9.uGwZeZPTXp0AF6KcZ8pW4AkFyRcKWro38ixPCHoj-3s";
 
   // Function to start the test
