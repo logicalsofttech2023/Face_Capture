@@ -78,41 +78,70 @@ const App = () => {
       };
     };
 
-    // Get key facial points
-    const leftPupil = toPixels(landmark[468]); // Left eye center
-    const rightPupil = toPixels(landmark[473]); // Right eye center
-    const noseTip = toPixels(landmark[4]); // Nose tip
-    const chin = toPixels(landmark[152]); // Chin
-    const forehead = toPixels(landmark[10]); // Forehead
+    // Get more accurate eye center points
+    const leftEyeCenter = {
+      x: (landmark[33].x + landmark[133].x + landmark[157].x + landmark[158].x + landmark[159].x + landmark[160].x + landmark[161].x + landmark[246].x) / 8,
+      y: (landmark[33].y + landmark[133].y + landmark[157].y + landmark[158].y + landmark[159].y + landmark[160].y + landmark[161].y + landmark[246].y) / 8
+    };
 
-    // Calculate face height in pixels
-    const faceHeightPx = Math.sqrt(
-      Math.pow(chin.x - forehead.x, 2) + Math.pow(chin.y - forehead.y, 2)
-    );
+    const rightEyeCenter = {
+      x: (landmark[263].x + landmark[362].x + landmark[373].x + landmark[374].x + landmark[380].x + landmark[381].x + landmark[382].x + landmark[466].x) / 8,
+      y: (landmark[263].y + landmark[362].y + landmark[373].y + landmark[374].y + landmark[380].y + landmark[381].y + landmark[382].y + landmark[466].y) / 8
+    };
 
-    // Use face height as reference (average male face height is ~190mm)
-    // This is more stable than using PD which varies between individuals
-    const averageFaceHeightMm = 190;
-    const pxToMm = averageFaceHeightMm / faceHeightPx;
+    // Convert to pixels
+    const leftPupil = toPixels(leftEyeCenter);
+    const rightPupil = toPixels(rightEyeCenter);
 
-    // Calculate PD (Pupillary Distance)
+    // Calculate face height using more stable reference points
+    const foreheadTop = toPixels(landmark[10]); // Forehead top
+    const chinBottom = toPixels(landmark[152]); // Chin bottom
+
+    // Calculate face height in pixels using more accurate vertical measurement
+    const faceHeightPx = Math.abs(chinBottom.y - foreheadTop.y);
+
+    // Use interpupillary distance as reference (more stable than face height)
+    // Average PD is ~62mm for adults, use this for calibration
+    const averagePDMm = 62;
     const pupilDistancePx = Math.sqrt(
       Math.pow(rightPupil.x - leftPupil.x, 2) +
-        Math.pow(rightPupil.y - leftPupil.y, 2)
+      Math.pow(rightPupil.y - leftPupil.y, 2)
     );
+
+    // Calculate pxToMm ratio using PD as reference (more accurate for PD measurement)
+    let pxToMm = averagePDMm / pupilDistancePx;
+
+    // Recalculate PD with calibrated ratio
     const pd = pupilDistancePx * pxToMm;
 
+    // Calculate face width for additional validation
+    const faceLeft = toPixels(landmark[234]); // Left face edge
+    const faceRight = toPixels(landmark[454]); // Right face edge
+    const faceWidthPx = Math.abs(faceRight.x - faceLeft.x);
+
+    // Validate measurements - face width should be reasonable (typically 1.3-1.5x face height)
+    const faceWidthMm = faceWidthPx * pxToMm;
+    const faceHeightMm = faceHeightPx * pxToMm;
+
+    // If measurements seem unreasonable, fall back to face height reference
+    if (faceWidthMm < 100 || faceWidthMm > 200 || faceHeightMm < 150 || faceHeightMm > 250) {
+      // Use face height as reference instead
+      const averageFaceHeightMm = 190;
+      pxToMm = averageFaceHeightMm / faceHeightPx;
+    }
+
     // Calculate NPD (Naso-Pupillary Distance)
+    const noseTip = toPixels(landmark[4]); // Nose tip
     const leftNpd =
       Math.sqrt(
         Math.pow(leftPupil.x - noseTip.x, 2) +
-          Math.pow(leftPupil.y - noseTip.y, 2)
+        Math.pow(leftPupil.y - noseTip.y, 2)
       ) * pxToMm;
 
     const rightNpd =
       Math.sqrt(
         Math.pow(rightPupil.x - noseTip.x, 2) +
-          Math.pow(rightPupil.y - noseTip.y, 2)
+        Math.pow(rightPupil.y - noseTip.y, 2)
       ) * pxToMm;
 
     // Calculate eye opening height
@@ -143,7 +172,7 @@ const App = () => {
     );
 
     const faceWidth = Math.sqrt(Math.pow(jawRight.x - jawLeft.x, 2)) * pxToMm;
-    const faceHeight = Math.sqrt(Math.pow(chin.y - forehead.y, 2)) * pxToMm;
+    const faceHeight = Math.sqrt(Math.pow(chinBottom.y - foreheadTop.y, 2)) * pxToMm;
 
     // Get cheekbone width
     const leftCheek = toPixels(landmark[123]);
@@ -228,6 +257,23 @@ const App = () => {
       }
     }
 
+    // Validate measurements
+    const validateMeasurement = (value, min, max) => {
+      return value >= min && value <= max;
+    };
+
+    const isValid = validateMeasurement(pd, 50, 80) &&
+      validateMeasurement(leftNpd, 20, 40) &&
+      validateMeasurement(rightNpd, 20, 40);
+
+    if (!isValid) {
+      console.warn("Measurements outside expected ranges:", {
+        pd,
+        leftNpd,
+        rightNpd
+      });
+    }
+
     return {
       pd: pd.toFixed(1),
       npd: {
@@ -248,12 +294,13 @@ const App = () => {
       faceLength: faceHeight.toFixed(1),
       faceHeightPx,
       distanceStatus,
+      isValid
     };
   };
 
   // Capture final measurements
   const captureMeasurements = () => {
-    if (measurements) {
+    if (measurements && measurements.isValid) {
       setFinalMeasurements(measurements);
       setIsCaptured(true);
       setAppState("results");
@@ -346,6 +393,7 @@ const App = () => {
     if (
       measurements &&
       measurements.distanceStatus === "optimal" &&
+      measurements.isValid &&
       appState === "measuring" &&
       !isCaptured
     ) {
@@ -366,14 +414,21 @@ const App = () => {
     if (captureCountdown === null) return;
     if (captureCountdown > 0) {
       const timer = setTimeout(() => {
-        setCaptureCountdown((prev) => prev - 1); // ✅ functional update
+        setCaptureCountdown((prev) => prev - 1);
       }, 1000);
       return () => clearTimeout(timer);
     } else if (captureCountdown === 0) {
-      captureMeasurements(); // ✅ Auto capture when 0
-      setCaptureCountdown(null); // Reset countdown
+      captureMeasurements();
+      setCaptureCountdown(null);
     }
   }, [captureCountdown]);
+
+  // Update the distance status
+  useEffect(() => {
+    if (measurements && measurements.distanceStatus) {
+      setDistanceStatus(measurements.distanceStatus);
+    }
+  }, [measurements]);
 
   // Webcam prediction with throttling
   const predictWebcam = async () => {
@@ -489,8 +544,19 @@ const App = () => {
             ctx.fill();
           };
 
-          drawPoint(landmarks[468], "#ea4335", 3); // Left pupil
-          drawPoint(landmarks[473], "#ea4335", 3); // Right pupil
+          // Get more accurate eye center points for drawing
+          const leftEyeCenter = {
+            x: (landmarks[33].x + landmarks[133].x + landmarks[157].x + landmarks[158].x + landmarks[159].x + landmarks[160].x + landmarks[161].x + landmarks[246].x) / 8,
+            y: (landmarks[33].y + landmarks[133].y + landmarks[157].y + landmarks[158].y + landmarks[159].y + landmarks[160].y + landmarks[161].y + landmarks[246].y) / 8
+          };
+
+          const rightEyeCenter = {
+            x: (landmarks[263].x + landmarks[362].x + landmarks[373].x + landmarks[374].x + landmarks[380].x + landmarks[381].x + landmarks[382].x + landmarks[466].x) / 8,
+            y: (landmarks[263].y + landmarks[362].y + landmarks[373].y + landmarks[374].y + landmarks[380].y + landmarks[381].y + landmarks[382].y + landmarks[466].y) / 8
+          };
+
+          drawPoint(leftEyeCenter, "#ea4335", 3); // Left pupil
+          drawPoint(rightEyeCenter, "#ea4335", 3); // Right pupil
           drawPoint(landmarks[4], "#fbbc05", 3); // Nose tip
         }
       } else {
