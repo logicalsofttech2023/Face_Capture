@@ -22,7 +22,6 @@ const App = () => {
   const [isCaptured, setIsCaptured] = useState(false);
   const [appState, setAppState] = useState("instructions"); // instructions, measuring, results
   const [distanceStatus, setDistanceStatus] = useState("checking"); // checking, tooClose, tooFar, optimal
-  const [captureCountdown, setCaptureCountdown] = useState(null);
 
   // Performance optimization
   const lastFrameTimeRef = useRef(0);
@@ -304,7 +303,8 @@ const App = () => {
       setFinalMeasurements(measurements);
       setIsCaptured(true);
       setAppState("results");
-      setCaptureCountdown(null);
+    } else {
+      setWebcamError("Cannot capture measurements. Please ensure your face is properly detected and positioned.");
     }
   };
 
@@ -314,7 +314,6 @@ const App = () => {
     setIsCaptured(false);
     setAppState("instructions");
     setDistanceStatus("checking");
-    setCaptureCountdown(null);
     setMeasurements(null);
   };
 
@@ -387,41 +386,6 @@ const App = () => {
       }
     }
   };
-
-  // Auto-capture when conditions are optimal
-  useEffect(() => {
-    if (
-      measurements &&
-      measurements.distanceStatus === "optimal" &&
-      measurements.isValid &&
-      appState === "measuring" &&
-      !isCaptured
-    ) {
-      if (captureCountdown === null) {
-        // Start countdown at 3
-        setCaptureCountdown(3);
-      }
-    } else {
-      // Reset countdown if face not optimal
-      if (captureCountdown !== null) {
-        setCaptureCountdown(null);
-      }
-    }
-  }, [measurements, appState, isCaptured]);
-
-  // Countdown effect
-  useEffect(() => {
-    if (captureCountdown === null) return;
-    if (captureCountdown > 0) {
-      const timer = setTimeout(() => {
-        setCaptureCountdown((prev) => prev - 1);
-      }, 1000);
-      return () => clearTimeout(timer);
-    } else if (captureCountdown === 0) {
-      captureMeasurements();
-      setCaptureCountdown(null);
-    }
-  }, [captureCountdown]);
 
   // Update the distance status
   useEffect(() => {
@@ -714,12 +678,19 @@ const App = () => {
           {distanceStatus === "optimal" && (
             <div className="feedback optimal">
               <div className="feedback-icon">✅</div>
-              <p>Perfect distance! Hold still...</p>
-              {captureCountdown !== null && (
-                <div className="countdown">Capturing in {captureCountdown}</div>
-              )}
+              <p>Perfect distance! Ready to capture</p>
             </div>
           )}
+        </div>
+
+        <div className="capture-controls">
+          <button 
+            className="capture-button" 
+            onClick={captureMeasurements}
+            disabled={!measurements || !measurements.isValid || distanceStatus !== "optimal"}
+          >
+            <span className="icon">📷</span> Capture Measurements
+          </button>
         </div>
       </div>
     </div>
