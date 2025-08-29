@@ -354,22 +354,35 @@ const App = () => {
     }
   };
 
-  // Reset capture and start over
+  // Update the resetCapture function
   const resetCapture = () => {
+    // Stop webcam if it's running
+    if (webcamRunning) {
+      setWebcamRunning(false);
+      if (webcamRef.current && webcamRef.current.srcObject) {
+        const tracks = webcamRef.current.srcObject.getTracks();
+        tracks.forEach((track) => track.stop());
+        webcamRef.current.srcObject = null;
+      }
+    }
+
     setFinalMeasurements(null);
     setIsCaptured(false);
     setAppState("instructions");
     setDistanceStatus("checking");
     setMeasurements(null);
+    setWebcamError(null);
   };
 
-  // Start measurement process
-  const startMeasurement = () => {
+  // Update the startMeasurement function
+  const startMeasurement = async () => {
     setAppState("measuring");
+    // Small delay to ensure state updates before starting webcam
+    await new Promise((resolve) => setTimeout(resolve, 100));
     toggleWebcam();
   };
 
-  // Toggle webcam
+  // Update the toggleWebcam function to handle state transitions better
   const toggleWebcam = async () => {
     if (!faceLandmarker) {
       setError("Face measurement model not loaded yet.");
@@ -381,25 +394,20 @@ const App = () => {
       setWebcamRunning(false);
       setWebcamError(null);
       setMeasurements(null);
-      setFinalMeasurements(null);
-      setIsCaptured(false);
       if (webcamRef.current && webcamRef.current.srcObject) {
         const tracks = webcamRef.current.srcObject.getTracks();
         tracks.forEach((track) => track.stop());
         webcamRef.current.srcObject = null;
-        webcamRef.current.pause();
       }
     } else {
       // Start webcam
       setWebcamRunning(true);
       setWebcamError(null);
-      setFinalMeasurements(null);
-      setIsCaptured(false);
 
       const constraints = {
         video: {
           facingMode: "user",
-          width: { ideal: 640 }, // Reduced resolution for better performance
+          width: { ideal: 640 },
           height: { ideal: 480 },
           frameRate: { ideal: 30 },
         },
