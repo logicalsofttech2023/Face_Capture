@@ -138,7 +138,7 @@ const App = () => {
     // Enhanced face shape detection
     const jawLeft = toPixels(landmark[234]);
     const jawRight = toPixels(landmark[454]);
-    const jawlinePoints = Array.from({ length: 17 }, (_, i) => 
+    const jawlinePoints = Array.from({ length: 17 }, (_, i) =>
       toPixels(landmark[234 + i])
     );
 
@@ -158,15 +158,21 @@ const App = () => {
       Math.sqrt(Math.pow(rightTemple.x - leftTemple.x, 2)) * pxToMm;
 
     // Get jawline angles for better shape detection
-    const jawAngleLeft = Math.atan2(
-      jawlinePoints[0].y - jawlinePoints[4].y,
-      jawlinePoints[0].x - jawlinePoints[4].x
-    ) * 180 / Math.PI;
-    
-    const jawAngleRight = Math.atan2(
-      jawlinePoints[16].y - jawlinePoints[12].y,
-      jawlinePoints[16].x - jawlinePoints[12].x
-    ) * 180 / Math.PI;
+    const jawAngleLeft =
+      (Math.atan2(
+        jawlinePoints[0].y - jawlinePoints[4].y,
+        jawlinePoints[0].x - jawlinePoints[4].x
+      ) *
+        180) /
+      Math.PI;
+
+    const jawAngleRight =
+      (Math.atan2(
+        jawlinePoints[16].y - jawlinePoints[12].y,
+        jawlinePoints[16].x - jawlinePoints[12].x
+      ) *
+        180) /
+      Math.PI;
 
     // Calculate ratios for face shape detection
     const faceRatio = faceWidth / faceHeight;
@@ -176,15 +182,30 @@ const App = () => {
     // Enhanced face shape classification with more accurate criteria
     let faceShape = "Oval";
 
-    if (faceRatio > 0.85 && Math.abs(jawAngleLeft) < 120 && Math.abs(jawAngleRight) < 120) {
+    if (
+      faceRatio > 0.85 &&
+      Math.abs(jawAngleLeft) < 120 &&
+      Math.abs(jawAngleRight) < 120
+    ) {
       faceShape = "Round";
     } else if (faceRatio < 0.75 && cheekboneJawRatio > 0.95) {
       faceShape = "Long";
-    } else if (Math.abs(faceWidth - cheekboneWidth) < 5 && Math.abs(faceWidth - foreheadWidth) < 5) {
+    } else if (
+      Math.abs(faceWidth - cheekboneWidth) < 5 &&
+      Math.abs(faceWidth - foreheadWidth) < 5
+    ) {
       faceShape = "Square";
-    } else if (foreheadJawRatio > 1.1 && cheekboneJawRatio > 1.05 && faceRatio > 0.8) {
+    } else if (
+      foreheadJawRatio > 1.1 &&
+      cheekboneJawRatio > 1.05 &&
+      faceRatio > 0.8
+    ) {
       faceShape = "Heart";
-    } else if (cheekboneJawRatio > 1.05 && foreheadJawRatio < 0.95 && faceRatio < 0.85) {
+    } else if (
+      cheekboneJawRatio > 1.05 &&
+      foreheadJawRatio < 0.95 &&
+      faceRatio < 0.85
+    ) {
       faceShape = "Diamond";
     } else if (Math.abs(jawAngleLeft) > 130 || Math.abs(jawAngleRight) > 130) {
       faceShape = "Triangle";
@@ -197,7 +218,7 @@ const App = () => {
         // Set optimal face height based on canvas height (around 60% of canvas height)
         optimalFaceHeightPx.current = canvas.height * 0.6;
       }
-      
+
       if (faceHeightPx > optimalFaceHeightPx.current * 1.2) {
         distanceStatus = "tooClose";
       } else if (faceHeightPx < optimalFaceHeightPx.current * 0.8) {
@@ -226,7 +247,7 @@ const App = () => {
       faceWidth: faceWidth.toFixed(1),
       faceLength: faceHeight.toFixed(1),
       faceHeightPx,
-      distanceStatus
+      distanceStatus,
     };
   };
 
@@ -236,6 +257,7 @@ const App = () => {
       setFinalMeasurements(measurements);
       setIsCaptured(true);
       setAppState("results");
+      setCaptureCountdown(null);
     }
   };
 
@@ -246,6 +268,7 @@ const App = () => {
     setAppState("instructions");
     setDistanceStatus("checking");
     setCaptureCountdown(null);
+    setMeasurements(null);
   };
 
   // Start measurement process
@@ -319,8 +342,14 @@ const App = () => {
   };
 
   // Auto-capture when conditions are optimal
+  // Auto-capture when conditions are optimal
   useEffect(() => {
-    if (measurements && measurements.distanceStatus === "optimal" && appState === "measuring" && !isCaptured) {
+    if (
+      measurements &&
+      measurements.distanceStatus === "optimal" &&
+      appState === "measuring" &&
+      !isCaptured
+    ) {
       if (captureCountdown === null) {
         // Start countdown
         setCaptureCountdown(3);
@@ -333,9 +362,13 @@ const App = () => {
       } else {
         // Countdown complete, capture measurements
         captureMeasurements();
+        setCaptureCountdown(null); // Reset countdown after capture
       }
-    } else if (measurements && measurements.distanceStatus !== "optimal" && captureCountdown !== null) {
-      // Reset countdown if distance is no longer optimal
+    } else if (
+      (!measurements || measurements.distanceStatus !== "optimal") &&
+      captureCountdown !== null
+    ) {
+      // Reset countdown if distance is no longer optimal or no measurements
       setCaptureCountdown(null);
     }
   }, [measurements, captureCountdown, isCaptured, appState]);
@@ -554,10 +587,7 @@ const App = () => {
     <div className="screen measuring-screen">
       <div className="webcam-container">
         <div className="webcam-controls">
-          <button
-            className="webcam-toggle active"
-            onClick={toggleWebcam}
-          >
+          <button className="webcam-toggle active" onClick={toggleWebcam}>
             <span className="icon">●</span> Stop Measurement
           </button>
 
@@ -625,9 +655,7 @@ const App = () => {
               <div className="feedback-icon">✅</div>
               <p>Perfect distance! Hold still...</p>
               {captureCountdown !== null && (
-                <div className="countdown">
-                  Capturing in {captureCountdown}
-                </div>
+                <div className="countdown">Capturing in {captureCountdown}</div>
               )}
             </div>
           )}
@@ -643,9 +671,7 @@ const App = () => {
         <div className="measurements-grid">
           <div className="measurement-card">
             <h3>Pupillary Distance (PD)</h3>
-            <div className="measurement-value">
-              {finalMeasurements.pd} mm
-            </div>
+            <div className="measurement-value">{finalMeasurements.pd} mm</div>
             <p className="measurement-desc">Distance between pupils</p>
           </div>
 
@@ -654,20 +680,14 @@ const App = () => {
             <div className="measurement-subvalues">
               <div>
                 <span className="label">Left Eye:</span>
-                <span className="value">
-                  {finalMeasurements.npd.left} mm
-                </span>
+                <span className="value">{finalMeasurements.npd.left} mm</span>
               </div>
               <div>
                 <span className="label">Right Eye:</span>
-                <span className="value">
-                  {finalMeasurements.npd.right} mm
-                </span>
+                <span className="value">{finalMeasurements.npd.right} mm</span>
               </div>
             </div>
-            <p className="measurement-desc">
-              Distance from nose to each pupil
-            </p>
+            <p className="measurement-desc">Distance from nose to each pupil</p>
           </div>
 
           <div className="measurement-card">
@@ -711,9 +731,7 @@ const App = () => {
                 </span>
               </div>
             </div>
-            <p className="measurement-desc">
-              Vertical position of pupils
-            </p>
+            <p className="measurement-desc">Vertical position of pupils</p>
           </div>
 
           <div className="measurement-card">
@@ -721,15 +739,11 @@ const App = () => {
             <div className="measurement-subvalues">
               <div>
                 <span className="label">Width:</span>
-                <span className="value">
-                  {finalMeasurements.faceWidth} mm
-                </span>
+                <span className="value">{finalMeasurements.faceWidth} mm</span>
               </div>
               <div>
                 <span className="label">Length:</span>
-                <span className="value">
-                  {finalMeasurements.faceLength} mm
-                </span>
+                <span className="value">{finalMeasurements.faceLength} mm</span>
               </div>
             </div>
             <p className="measurement-desc">Basic face measurements</p>
