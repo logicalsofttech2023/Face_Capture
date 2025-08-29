@@ -342,7 +342,6 @@ const App = () => {
   };
 
   // Auto-capture when conditions are optimal
-  // Auto-capture when conditions are optimal
   useEffect(() => {
     if (
       measurements &&
@@ -351,34 +350,30 @@ const App = () => {
       !isCaptured
     ) {
       if (captureCountdown === null) {
-        // Start countdown
+        // Start countdown at 3
         setCaptureCountdown(3);
-      } else if (captureCountdown > 0) {
-        // Continue countdown
-        const timer = setTimeout(() => {
-          setCaptureCountdown(captureCountdown - 1);
-        }, 1000);
-        return () => clearTimeout(timer);
-      } else {
-        // Countdown complete, capture measurements
-        captureMeasurements();
-        setCaptureCountdown(null); // Reset countdown after capture
       }
-    } else if (
-      (!measurements || measurements.distanceStatus !== "optimal") &&
-      captureCountdown !== null
-    ) {
-      // Reset countdown if distance is no longer optimal or no measurements
-      setCaptureCountdown(null);
+    } else {
+      // Reset countdown if face not optimal
+      if (captureCountdown !== null) {
+        setCaptureCountdown(null);
+      }
     }
-  }, [measurements, captureCountdown, isCaptured, appState]);
+  }, [measurements, appState, isCaptured]);
 
-  // Update distance status for UI
+  // Countdown effect
   useEffect(() => {
-    if (measurements && measurements.distanceStatus) {
-      setDistanceStatus(measurements.distanceStatus);
+    if (captureCountdown === null) return;
+    if (captureCountdown > 0) {
+      const timer = setTimeout(() => {
+        setCaptureCountdown((prev) => prev - 1); // ✅ functional update
+      }, 1000);
+      return () => clearTimeout(timer);
+    } else if (captureCountdown === 0) {
+      captureMeasurements(); // ✅ Auto capture when 0
+      setCaptureCountdown(null); // Reset countdown
     }
-  }, [measurements]);
+  }, [captureCountdown]);
 
   // Webcam prediction with throttling
   const predictWebcam = async () => {
