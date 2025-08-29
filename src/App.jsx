@@ -22,6 +22,8 @@ const App = () => {
   const [isCaptured, setIsCaptured] = useState(false);
   const [appState, setAppState] = useState("instructions"); // instructions, measuring, results
   const [distanceStatus, setDistanceStatus] = useState("checking"); // checking, tooClose, tooFar, optimal
+  const [orientationStatus, setOrientationStatus] = useState("checking"); // checking, straight, turnLeft, turnRight, tilted
+  const [glassesStatus, setGlassesStatus] = useState("unknown"); // unknown, none, detected
 
   // Performance optimization
   const lastFrameTimeRef = useRef(0);
@@ -298,6 +300,22 @@ const App = () => {
       }
     }
 
+    // Face orientation detection
+    const npdDiff = leftNpd - rightNpd;
+    const npdThreshold = 2.0; // mm
+    const eyeYDiff = Math.abs(leftPupil.y - rightPupil.y);
+    const rollThreshold = 10; // pixels
+    let orientation = "checking";
+    if (faceHeightPx > 0) {
+      if (eyeYDiff > rollThreshold) {
+        orientation = "tilted";
+      } else if (Math.abs(npdDiff) > npdThreshold) {
+        orientation = npdDiff > 0 ? "turnLeft" : "turnRight";
+      } else {
+        orientation = "straight";
+      }
+    }
+
     // Validate measurements
     const validateMeasurement = (value, min, max) => {
       return value >= min && value <= max;
@@ -306,8 +324,9 @@ const App = () => {
     const isValid =
       validateMeasurement(pd, 50, 80) &&
       validateMeasurement(leftNpd, 20, 40) &&
-      validateMeasurement(rightNpd, 20, 40);
-    distanceStatus === "optimal";
+      validateMeasurement(rightNpd, 20, 40) &&
+      distanceStatus === "optimal" &&
+      orientation === "straight";
 
     if (!isValid) {
       console.warn("Measurements outside expected ranges:", {
@@ -337,19 +356,55 @@ const App = () => {
       faceLength: faceHeight.toFixed(1),
       faceHeightPx,
       distanceStatus,
+      orientation,
       isValid,
     };
   };
 
+  // Glasses detection heuristic
+  const detectGlasses = (tempCtx, landmarks, canvasWidth, canvasHeight) => {
+    const toPixels = (point) => ({
+      x: point.x * canvasWidth,
+      y: point.y * canvasHeight,
+    });
+
+    const noseBridge = toPixels(landmarks[168]); // Root of nose between eyes
+    const areaX = noseBridge.x - 10;
+    const areaY = noseBridge.y - 15; // Slightly above
+    const areaWidth = 20;
+    const areaHeight = 10;
+
+    let imageData;
+    try {
+      imageData = tempCtx.getImageData(areaX, areaY, areaWidth, areaHeight);
+    } catch (e) {
+      console.error("Error getting image data:", e);
+      return false;
+    }
+
+    let total = 0;
+    let count = 0;
+    for (let i = 0; i < imageData.data.length; i += 4) {
+      const r = imageData.data[i];
+      const g = imageData.data[i + 1];
+      const b = imageData.data[i + 2];
+      total += (r + g + b) / 3;
+      count++;
+    }
+
+    const avg = total / count;
+    return avg < 100; // Adjust threshold based on testing; lower means darker area, possibly glasses bridge
+  };
+
   // Capture final measurements
   const captureMeasurements = () => {
-    if (measurements && distanceStatus === "optimal") {
+    if (measurements && distanceStatus === "optimal" && orientationStatus === "straight" && glassesStatus !== "detected") {
       setFinalMeasurements(measurements);
       setIsCaptured(true);
       setAppState("results");
     } else {
       setWebcamError(
-        "Cannot capture measurements. Please ensure your face is properly detected and positioned at the optimal distance."
+        "Cannot capture measurements. Please ensure your face is properly detected, positioned at the optimal distance, straight, and without glasses."
       );
     }
   };
@@ -370,6 +425,8 @@ const App = () => {
     setIsCaptured(false);
     setAppState("instructions");
     setDistanceStatus("checking");
+    setOrientationStatus("checking");
+    setGlassesStatus("unknown");
     setMeasurements(null);
     setWebcamError(null);
   };
@@ -441,13 +498,6 @@ const App = () => {
     }
   };
 
-  // Update the distance status
-  useEffect(() => {
-    if (measurements && measurements.distanceStatus) {
-      setDistanceStatus(measurements.distanceStatus);
-    }
-  }, [measurements]);
-
   // Webcam prediction with throttling
   const predictWebcam = async () => {
     if (
@@ -513,6 +563,15 @@ const App = () => {
 
         // Clear previous error if face is detected
         setWebcamError(null);
+
+        // Glasses detection
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+        const tempCtx = tempCanvas.getContext("2d");
+        tempCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
+        const isGlasses = detectGlasses(tempCtx, results.faceLandmarks[0], canvas.width, canvas.height);
+        setGlassesStatus(isGlasses ? "detected" : "none");
 
         // Calculate and update measurements
         const newMeasurements = calculateMeasurements(
@@ -619,6 +678,8 @@ const App = () => {
         );
         setMeasurements(null);
         setDistanceStatus("checking");
+        setOrientationStatus("checking");
+        setGlassesStatus("unknown");
       }
     } catch (error) {
       console.error("Error during face measurement:", error);
@@ -650,6 +711,17 @@ const App = () => {
       };
     }
   }, [webcamRunning]);
+
+  // Update distance and orientation status
+  useEffect(() => {
+    if (measurements) {
+      setDistanceStatus(measurements.distanceStatus || "checking");
+      setOrientationStatus(measurements.orientation || "checking");
+    } else {
+      setDistanceStatus("checking");
+      setOrientationStatus("checking");
+    }
+  }, [measurements]);
 
   // Check if webcam is supported
   const hasGetUserMedia = () => {
@@ -773,11 +845,53 @@ const App = () => {
           )}
         </div>
 
+        <div className="orientation-feedback">
+          {orientationStatus === "checking" && (
+            <div className="feedback checking">
+              <div className="feedback-icon">🔍</div>
+              <p>Checking face position...</p>
+            </div>
+          )}
+          {orientationStatus === "straight" && (
+            <div className="feedback optimal">
+              <div className="feedback-icon">✅</div>
+              <p>Face position perfect!</p>
+            </div>
+          )}
+          {orientationStatus === "turnLeft" && (
+            <div className="feedback too-close">
+              <div className="feedback-icon">↪️</div>
+              <p>Turn your face slightly to the right</p>
+            </div>
+          )}
+          {orientationStatus === "turnRight" && (
+            <div className="feedback too-close">
+              <div className="feedback-icon">↩️</div>
+              <p>Turn your face slightly to the left</p>
+            </div>
+          )}
+          {orientationStatus === "tilted" && (
+            <div className="feedback too-close">
+              <div className="feedback-icon">↪️</div>
+              <p>Level your head horizontally</p>
+            </div>
+          )}
+        </div>
+
+        <div className="glasses-feedback">
+          {glassesStatus === "detected" && (
+            <div className="feedback too-close">
+              <div className="feedback-icon">👓</div>
+              <p>Please remove your glasses for accurate measurements</p>
+            </div>
+          )}
+        </div>
+
         <div className="capture-controls">
           <button
             className="capture-button"
             onClick={captureMeasurements}
-            disabled={!measurements || distanceStatus !== "optimal"}
+            disabled={!measurements || distanceStatus !== "optimal" || orientationStatus !== "straight" || glassesStatus === "detected"}
           >
             <span className="icon">📷</span> Capture Measurements
           </button>
