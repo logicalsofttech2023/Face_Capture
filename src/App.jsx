@@ -508,6 +508,41 @@ const App = () => {
     }
   };
 
+  // Keep measurement history (outside calculateMeasurements)
+  const measurementsHistory = useRef([]);
+  const HISTORY_SIZE = 15; // tune this for smoothing
+
+  const smoothMeasurements = (newData) => {
+    measurementsHistory.current.push(newData);
+
+    if (measurementsHistory.current.length > HISTORY_SIZE) {
+      measurementsHistory.current.shift();
+    }
+
+    const avg = {};
+    const keys = Object.keys(newData);
+    keys.forEach((k) => {
+      if (typeof newData[k] === "object") {
+        avg[k] = {};
+        Object.keys(newData[k]).forEach((subKey) => {
+          avg[k][subKey] =
+            measurementsHistory.current.reduce(
+              (sum, item) => sum + parseFloat(item[k][subKey]),
+              0
+            ) / measurementsHistory.current.length;
+        });
+      } else {
+        avg[k] =
+          measurementsHistory.current.reduce(
+            (sum, item) => sum + parseFloat(item[k]),
+            0
+          ) / measurementsHistory.current.length;
+      }
+    });
+
+    return avg;
+  };
+
   // Webcam prediction with throttling
   const predictWebcam = async () => {
     if (
@@ -594,7 +629,8 @@ const App = () => {
           canvas
         );
         if (newMeasurements) {
-          setMeasurements(newMeasurements);
+          const smoothed = smoothMeasurements(newMeasurements);
+          setMeasurements(smoothed);
         }
 
         // Draw face landmarks with minimal styling for measurement purposes
