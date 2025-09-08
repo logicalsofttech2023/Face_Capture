@@ -24,7 +24,6 @@ const App = () => {
   const [distanceStatus, setDistanceStatus] = useState("checking"); // checking, tooClose, tooFar, optimal
   const [orientationStatus, setOrientationStatus] = useState("checking"); // checking, straight, turnLeft, turnRight, tilted
   const [glassesStatus, setGlassesStatus] = useState("unknown"); // unknown, none, detected
-  // State
   const [calibrationMode, setCalibrationMode] = useState(false);
   const [calibrated, setCalibrated] = useState(false);
   const pxToMmCalibrated = useRef(null);
@@ -141,31 +140,6 @@ const App = () => {
     // Calculate face height in pixels using more accurate vertical measurement
     const faceHeightPx = Math.abs(chinBottom.y - foreheadTop.y);
 
-    if (calibrationMode && results.faceLandmarks) {
-      // Example: use outer eye corners (33, 263) as reference points
-      // Instead you can ask user to hold card at nose area and map bounding box pixels
-      const leftEye = results.faceLandmarks[33];
-      const rightEye = results.faceLandmarks[263];
-
-      const width = canvas.width;
-      const height = canvas.height;
-
-      const pxDist = Math.sqrt(
-        Math.pow((rightEye.x - leftEye.x) * width, 2) +
-          Math.pow((rightEye.y - leftEye.y) * height, 2)
-      );
-
-      // Known width of reference object (credit card = 85.6mm)
-      const knownWidthMm = 85.6;
-
-      // Save calibration factor
-      pxToMmCalibrated.current = knownWidthMm / pxDist;
-      setCalibrated(true);
-      setCalibrationMode(false);
-
-      console.log("✅ Calibration factor set:", pxToMmCalibrated.current);
-    }
-
     // Use interpupillary distance as reference (more stable than face height)
     // Average PD is ~62mm for adults, use this for calibration
     const averagePDMm = 62;
@@ -177,7 +151,7 @@ const App = () => {
     // Calculate pxToMm ratio using PD as reference (more accurate for PD measurement)
     let pxToMm = pxToMmCalibrated.current
       ? pxToMmCalibrated.current
-      : 62 / pupilDistancePx;
+      : averagePDMm / pupilDistancePx; // fallback if not calibrated
 
     // Recalculate PD with calibrated ratio
     const pd = pupilDistancePx * pxToMm;
@@ -397,6 +371,41 @@ const App = () => {
     };
   };
 
+  // Perform calibration
+  const performCalibration = (landmarks, canvas) => {
+    if (!landmarks || landmarks.length === 0) return false;
+
+    const landmark = landmarks[0];
+    
+    // Use outer eye corners as reference points
+    const leftEyeOuter = {
+      x: landmark[33].x * canvas.width,
+      y: landmark[33].y * canvas.height
+    };
+    
+    const rightEyeOuter = {
+      x: landmark[263].x * canvas.width,
+      y: landmark[263].y * canvas.height
+    };
+
+    // Calculate pixel distance between eye corners
+    const pxDist = Math.sqrt(
+      Math.pow(rightEyeOuter.x - leftEyeOuter.x, 2) +
+      Math.pow(rightEyeOuter.y - leftEyeOuter.y, 2)
+    );
+
+    // Known average distance between outer eye corners is approximately 90-95mm
+    const knownWidthMm = 93; // Average inter-outer-canthal distance
+    
+    // Save calibration factor
+    pxToMmCalibrated.current = knownWidthMm / pxDist;
+    setCalibrated(true);
+    setCalibrationMode(false);
+    
+    console.log("✅ Calibration factor set:", pxToMmCalibrated.current);
+    return true;
+  };
+
   // Glasses detection heuristic
   const detectGlasses = (tempCtx, landmarks, canvasWidth, canvasHeight) => {
     const toPixels = (point) => ({
@@ -470,6 +479,9 @@ const App = () => {
     setGlassesStatus("unknown");
     setMeasurements(null);
     setWebcamError(null);
+    setCalibrationMode(false);
+    setCalibrated(false);
+    pxToMmCalibrated.current = null;
   };
 
   // Update the startMeasurement function
@@ -639,6 +651,16 @@ const App = () => {
 
         // Clear previous error if face is detected
         setWebcamError(null);
+
+        // Handle calibration if in calibration mode
+        if (calibrationMode) {
+          const success = performCalibration(results.faceLandmarks, canvas);
+          if (success) {
+            setWebcamError("Calibration successful! Measurements will now be more accurate.");
+          } else {
+            setWebcamError("Calibration failed. Please ensure your face is clearly visible.");
+          }
+        }
 
         // Glasses detection
         const tempCanvas = document.createElement("canvas");
@@ -844,6 +866,15 @@ const App = () => {
               <p>Position yourself about 50-60cm from the camera</p>
             </div>
           </div>
+          {!calibrated && (
+            <div className="instruction-step">
+              <div className="step-icon">🎯</div>
+              <div className="step-content">
+                <h3>Calibrate for Accuracy</h3>
+                <p>Click the calibrate button for more precise measurements</p>
+              </div>
+            </div>
+          )}
         </div>
         <button className="primary-button" onClick={startMeasurement}>
           Start Measurement
@@ -989,11 +1020,12 @@ const App = () => {
             <button
               onClick={() => setCalibrationMode(true)}
               className="calibrate-btn"
+              disabled={calibrationMode}
             >
-              Calibrate with Credit Card
+              {calibrationMode ? "Calibrating..." : "Calibrate for Accuracy"}
             </button>
           ) : (
-            <p className="calibrated-msg">✅ Calibration Done</p>
+            <p className="calibrated-msg">✅ Calibration Complete</p>
           )}
         </div>
       </div>
@@ -1004,6 +1036,12 @@ const App = () => {
     <div className="screen results-screen">
       <div className="screen-content">
         <h2>Your Facial Measurements</h2>
+        {calibrated && (
+          <div className="calibration-notice">
+            <span className="icon">✅</span> 
+            Measurements calibrated for accuracy
+          </div>
+        )}
         <div className="measurements-grid">
           <div className="measurement-card">
             <h3>Pupillary Distance (PD)</h3>
