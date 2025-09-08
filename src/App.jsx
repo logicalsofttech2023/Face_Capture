@@ -795,7 +795,6 @@ const App = () => {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   };
 
-  // Render different screens based on app state
   const renderInstructionsScreen = () => (
     <div className="screen instructions-screen">
       <div className="screen-content">
