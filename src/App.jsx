@@ -258,80 +258,55 @@ const App = () => {
     const rightPupilHeight =
       Math.abs(rightPupil.y - (rightEyeInner.y + rightEyeOuter.y) / 2) * pxToMm;
 
-    // Enhanced face shape detection
+    // FIXED face shape detection
     const jawLeft = toPixels(landmark[234]);
     const jawRight = toPixels(landmark[454]);
-    const jawlinePoints = Array.from({ length: 17 }, (_, i) =>
-      toPixels(landmark[234 + i])
-    );
 
-    const faceWidth = Math.sqrt(Math.pow(jawRight.x - jawLeft.x, 2)) * pxToMm;
-    const faceHeight =
-      Math.sqrt(Math.pow(chinBottom.y - foreheadTop.y, 2)) * pxToMm;
+    // Calculate face width and height in mm
+    const faceWidth = Math.abs(jawRight.x - jawLeft.x) * pxToMm;
+    const faceHeight = Math.abs(chinBottom.y - foreheadTop.y) * pxToMm;
 
     // Get cheekbone width
     const leftCheek = toPixels(landmark[123]);
     const rightCheek = toPixels(landmark[352]);
-    const cheekboneWidth =
-      Math.sqrt(Math.pow(rightCheek.x - leftCheek.x, 2)) * pxToMm;
+    const cheekboneWidth = Math.abs(rightCheek.x - leftCheek.x) * pxToMm;
+
+    // Get jaw width at different points
+    const jawMidLeft = toPixels(landmark[131]);
+    const jawMidRight = toPixels(landmark[371]);
+    const jawWidth = Math.abs(jawMidRight.x - jawMidLeft.x) * pxToMm;
 
     // Get forehead width
     const leftTemple = toPixels(landmark[21]);
     const rightTemple = toPixels(landmark[251]);
-    const foreheadWidth =
-      Math.sqrt(Math.pow(rightTemple.x - leftTemple.x, 2)) * pxToMm;
-
-    // Get jawline angles for better shape detection
-    const jawAngleLeft =
-      (Math.atan2(
-        jawlinePoints[0].y - jawlinePoints[4].y,
-        jawlinePoints[0].x - jawlinePoints[4].x
-      ) *
-        180) /
-      Math.PI;
-
-    const jawAngleRight =
-      (Math.atan2(
-        jawlinePoints[16].y - jawlinePoints[12].y,
-        jawlinePoints[16].x - jawlinePoints[12].x
-      ) *
-        180) /
-      Math.PI;
+    const foreheadWidth = Math.abs(rightTemple.x - leftTemple.x) * pxToMm;
 
     // Calculate ratios for face shape detection
     const faceRatio = faceWidth / faceHeight;
     const cheekboneJawRatio = cheekboneWidth / faceWidth;
-    const foreheadJawRatio = foreheadWidth / faceWidth;
+    const foreheadJawRatio = foreheadWidth / jawWidth;
 
-    // Enhanced face shape classification with more accurate criteria
+    // Improved face shape classification
     let faceShape = "Oval";
 
     if (
       faceRatio > 0.85 &&
-      Math.abs(jawAngleLeft) < 120 &&
-      Math.abs(jawAngleRight) < 120
+      foreheadJawRatio > 0.85 &&
+      cheekboneJawRatio > 0.85
     ) {
       faceShape = "Round";
-    } else if (faceRatio < 0.75 && cheekboneJawRatio > 0.95) {
+    } else if (faceRatio < 0.75) {
       faceShape = "Long";
     } else if (
-      Math.abs(faceWidth - cheekboneWidth) < 5 &&
-      Math.abs(faceWidth - foreheadWidth) < 5
+      Math.abs(foreheadWidth - jawWidth) < 5 &&
+      Math.abs(cheekboneWidth - jawWidth) < 5
     ) {
       faceShape = "Square";
-    } else if (
-      foreheadJawRatio > 1.1 &&
-      cheekboneJawRatio > 1.05 &&
-      faceRatio > 0.8
-    ) {
+    } else if (foreheadWidth > cheekboneWidth && cheekboneWidth > jawWidth) {
       faceShape = "Heart";
-    } else if (
-      cheekboneJawRatio > 1.05 &&
-      foreheadJawRatio < 0.95 &&
-      faceRatio < 0.85
-    ) {
+    } else if (cheekboneWidth > foreheadWidth && cheekboneWidth > jawWidth) {
       faceShape = "Diamond";
-    } else if (Math.abs(jawAngleLeft) > 130 || Math.abs(jawAngleRight) > 130) {
+    } else if (jawWidth > cheekboneWidth && jawWidth > foreheadWidth) {
       faceShape = "Triangle";
     }
 
@@ -418,6 +393,7 @@ const App = () => {
     };
   };
 
+
   // Glasses detection heuristic
   const detectGlasses = (tempCtx, landmarks, canvasWidth, canvasHeight) => {
     const toPixels = (point) => ({
@@ -425,7 +401,7 @@ const App = () => {
       y: point.y * canvasHeight,
     });
 
-    const noseBridge = toPixels(landmarks[168]); // Root of nose between eyes
+    const noseBridge = toPixels(landmarks[168]);
     const areaX = noseBridge.x - 10;
     const areaY = noseBridge.y - 15; // Slightly above
     const areaWidth = 20;
