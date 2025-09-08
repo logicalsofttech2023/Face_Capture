@@ -469,3 +469,47 @@ body {
     font-size: 1.5rem;
   }
 }
+
+
+.capture-controls {
+  display: flex;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.capture-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background-color: #2563eb; /* primary blue */
+  color: #fff;
+  font-size: 16px;
+  font-weight: 500;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3);
+}
+
+.capture-button:hover:not(:disabled) {
+  background-color: #1d4ed8; /* darker blue */
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px rgba(29, 78, 216, 0.35);
+}
+
+.capture-button:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 3px 8px rgba(29, 78, 216, 0.25);
+}
+
+.capture-button:disabled {
+  background-color: #9ca3af; /* gray */
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.capture-button .icon {
+  font-size: 18px;
+}
