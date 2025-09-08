@@ -513,3 +513,38 @@ body {
 .capture-button .icon {
   font-size: 18px;
 }
+
+
+.controls {
+  margin-top: 15px;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+button {
+  background: #4285f4;
+  color: #fff;
+  border: none;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+button:hover {
+  background: #3367d6;
+}
+
+button:disabled {
+  background: #aaa;
+  cursor: not-allowed;
+}
+
+.calibration-text {
+  margin-top: 8px;
+  font-size: 14px;
+  color: #fbbc05;
+  font-weight: bold;
+}

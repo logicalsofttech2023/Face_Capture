@@ -376,32 +376,32 @@ const App = () => {
     if (!landmarks || landmarks.length === 0) return false;
 
     const landmark = landmarks[0];
-    
+
     // Use outer eye corners as reference points
     const leftEyeOuter = {
       x: landmark[33].x * canvas.width,
-      y: landmark[33].y * canvas.height
+      y: landmark[33].y * canvas.height,
     };
-    
+
     const rightEyeOuter = {
       x: landmark[263].x * canvas.width,
-      y: landmark[263].y * canvas.height
+      y: landmark[263].y * canvas.height,
     };
 
     // Calculate pixel distance between eye corners
     const pxDist = Math.sqrt(
       Math.pow(rightEyeOuter.x - leftEyeOuter.x, 2) +
-      Math.pow(rightEyeOuter.y - leftEyeOuter.y, 2)
+        Math.pow(rightEyeOuter.y - leftEyeOuter.y, 2)
     );
 
     // Known average distance between outer eye corners is approximately 90-95mm
     const knownWidthMm = 93; // Average inter-outer-canthal distance
-    
+
     // Save calibration factor
     pxToMmCalibrated.current = knownWidthMm / pxDist;
     setCalibrated(true);
     setCalibrationMode(false);
-    
+
     console.log("✅ Calibration factor set:", pxToMmCalibrated.current);
     return true;
   };
@@ -656,9 +656,13 @@ const App = () => {
         if (calibrationMode) {
           const success = performCalibration(results.faceLandmarks, canvas);
           if (success) {
-            setWebcamError("Calibration successful! Measurements will now be more accurate.");
+            setWebcamError(
+              "Calibration successful! Measurements will now be more accurate."
+            );
           } else {
-            setWebcamError("Calibration failed. Please ensure your face is clearly visible.");
+            setWebcamError(
+              "Calibration failed. Please ensure your face is clearly visible."
+            );
           }
         }
 
@@ -863,9 +867,10 @@ const App = () => {
             <div className="step-icon">📏</div>
             <div className="step-content">
               <h3>Optimal Distance</h3>
-              <p>Position yourself about 50-60cm from the camera</p>
+              <p>Position yourself about 50–60cm from the camera</p>
             </div>
           </div>
+
           {!calibrated && (
             <div className="instruction-step">
               <div className="step-icon">🎯</div>
@@ -876,9 +881,36 @@ const App = () => {
             </div>
           )}
         </div>
-        <button className="primary-button" onClick={startMeasurement}>
-          Start Measurement
-        </button>
+
+        {/* Controls */}
+        <div className="controls">
+          {appState === "instructions" && (
+            <>
+              <button onClick={startMeasurement}>Start Measurement</button>
+              <button onClick={() => setCalibrationMode(true)}>
+                {calibrated ? "Recalibrate" : "Calibrate"}
+              </button>
+            </>
+          )}
+
+          {appState === "measuring" && (
+            <>
+              <button onClick={captureMeasurements}>
+                Capture Measurements
+              </button>
+              <button onClick={resetCapture}>Reset</button>
+              {calibrationMode && (
+                <p className="calibration-text">
+                  Please keep your face straight and steady for calibration...
+                </p>
+              )}
+            </>
+          )}
+
+          {appState === "results" && (
+            <button onClick={resetCapture}>Start Again</button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1038,7 +1070,7 @@ const App = () => {
         <h2>Your Facial Measurements</h2>
         {calibrated && (
           <div className="calibration-notice">
-            <span className="icon">✅</span> 
+            <span className="icon">✅</span>
             Measurements calibrated for accuracy
           </div>
         )}
