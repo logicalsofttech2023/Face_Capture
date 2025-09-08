@@ -1,6 +1,23 @@
 import React, { useEffect, useRef, useState } from "react";
 import "./App.css";
 import vision from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+import {
+  FaLightbulb,
+  FaGlasses,
+  FaCrosshairs,
+  FaRuler,
+  FaCamera,
+  FaRedo,
+  FaEnvelope,
+  FaCheckCircle,
+  FaExclamationTriangle,
+  FaSearch,
+  FaArrowUp,
+  FaArrowDown,
+  FaArrowLeft,
+  FaArrowRight,
+  FaSyncAlt,
+} from "react-icons/fa";
 
 const App = () => {
   const { FaceLandmarker, FilesetResolver, DrawingUtils } = vision;
@@ -24,6 +41,7 @@ const App = () => {
   const [distanceStatus, setDistanceStatus] = useState("checking"); // checking, tooClose, tooFar, optimal
   const [orientationStatus, setOrientationStatus] = useState("checking"); // checking, straight, turnLeft, turnRight, tilted
   const [glassesStatus, setGlassesStatus] = useState("unknown"); // unknown, none, detected
+  const [currentInstruction, setCurrentInstruction] = useState(0);
 
   // Performance optimization
   const lastFrameTimeRef = useRef(0);
@@ -31,6 +49,30 @@ const App = () => {
   const lastFpsUpdateRef = useRef(0);
   const minFrameInterval = 100;
   const optimalFaceHeightPx = useRef(0);
+
+  // Instructions data
+  const instructions = [
+    {
+      icon: <FaLightbulb className="instruction-icon" />,
+      title: "Good Lighting",
+      description: "Make sure your face is well-lit without harsh shadows",
+    },
+    {
+      icon: <FaGlasses className="instruction-icon" />,
+      title: "Remove Glasses",
+      description: "Take off glasses for more accurate measurements",
+    },
+    {
+      icon: <FaCrosshairs className="instruction-icon" />,
+      title: "Position Your Face",
+      description: "Look straight at the camera with a neutral expression",
+    },
+    {
+      icon: <FaRuler className="instruction-icon" />,
+      title: "Optimal Distance",
+      description: "Position yourself about 50-60cm from the camera",
+    },
+  ];
 
   // Initialize face landmarker
   useEffect(() => {
@@ -64,6 +106,16 @@ const App = () => {
 
     createFaceLandmarker();
   }, []);
+
+  useEffect(() => {
+    if (appState === "instructions") {
+      const interval = setInterval(() => {
+        setCurrentInstruction((prev) => (prev + 1) % instructions.length);
+      }, 3000);
+
+      return () => clearInterval(interval);
+    }
+  }, [appState, instructions.length]);
 
   // Calculate measurements from landmarks
   const calculateMeasurements = (landmarks, canvas) => {
@@ -748,36 +800,47 @@ const App = () => {
     <div className="screen instructions-screen">
       <div className="screen-content">
         <h2>Getting Accurate Measurements</h2>
-        <div className="instruction-steps">
-          <div className="instruction-step">
-            <div className="step-icon">💡</div>
-            <div className="step-content">
-              <h3>Good Lighting</h3>
-              <p>Make sure your face is well-lit without harsh shadows</p>
+
+        <div className="instruction-demo">
+          <div className="demo-face">
+            <div className="face-outline">
+              <div className="face-features">
+                <div className="eyes">
+                  <div className="eye left"></div>
+                  <div className="eye right"></div>
+                </div>
+                <div className="nose"></div>
+                <div className="mouth"></div>
+              </div>
             </div>
-          </div>
-          <div className="instruction-step">
-            <div className="step-icon">👓</div>
-            <div className="step-content">
-              <h3>Remove Glasses</h3>
-              <p>Take off glasses for more accurate measurements</p>
-            </div>
-          </div>
-          <div className="instruction-step">
-            <div className="step-icon">🎯</div>
-            <div className="step-content">
-              <h3>Position Your Face</h3>
-              <p>Look straight at the camera with a neutral expression</p>
-            </div>
-          </div>
-          <div className="instruction-step">
-            <div className="step-icon">📏</div>
-            <div className="step-content">
-              <h3>Optimal Distance</h3>
-              <p>Position yourself about 50-60cm from the camera</p>
+
+            <div className="demo-overlay">
+              <div className="measurement-lines">
+                <div className="line pd-line animated"></div>
+                <div className="line npd-line left animated"></div>
+                <div className="line npd-line right animated"></div>
+              </div>
             </div>
           </div>
         </div>
+
+        <div className="instruction-steps">
+          {instructions.map((instruction, index) => (
+            <div
+              key={index}
+              className={`instruction-step ${
+                index === currentInstruction ? "active" : ""
+              }`}
+            >
+              <div className="step-icon">{instruction.icon}</div>
+              <div className="step-content">
+                <h3>{instruction.title}</h3>
+                <p>{instruction.description}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+
         <button className="primary-button" onClick={startMeasurement}>
           Start Measurement
         </button>
@@ -790,7 +853,10 @@ const App = () => {
       <div className="webcam-container">
         <div className="webcam-controls">
           <button className="webcam-toggle active" onClick={toggleWebcam}>
-            <span className="icon">●</span> Stop Measurement
+            <span className="icon">
+              <FaSyncAlt />
+            </span>{" "}
+            Stop Measurement
           </button>
 
           <div className="fps-counter">FPS: {fps}</div>
@@ -833,73 +899,95 @@ const App = () => {
           )}
         </div>
 
-        <div className="distance-feedback">
-          {distanceStatus === "checking" && (
-            <div className="feedback checking">
-              <div className="feedback-icon">🔍</div>
-              <p>Looking for your face...</p>
-            </div>
-          )}
-          {distanceStatus === "tooClose" && (
-            <div className="feedback too-close">
-              <div className="feedback-icon">👆</div>
-              <p>Move slightly farther from the camera</p>
-            </div>
-          )}
-          {distanceStatus === "tooFar" && (
-            <div className="feedback too-far">
-              <div className="feedback-icon">👇</div>
-              <p>Move slightly closer to the camera</p>
-            </div>
-          )}
-          {distanceStatus === "optimal" && (
-            <div className="feedback optimal">
-              <div className="feedback-icon">✅</div>
-              <p>Perfect distance! Ready to capture</p>
-            </div>
-          )}
-        </div>
+        <div className="status-indicators">
+          <div className="distance-feedback">
+            {distanceStatus === "checking" && (
+              <div className="feedback checking">
+                <div className="feedback-icon">
+                  <FaSearch />
+                </div>
+                <p>Looking for your face...</p>
+              </div>
+            )}
+            {distanceStatus === "tooClose" && (
+              <div className="feedback too-close">
+                <div className="feedback-icon">
+                  <FaArrowDown />
+                </div>
+                <p>Move slightly farther from the camera</p>
+              </div>
+            )}
+            {distanceStatus === "tooFar" && (
+              <div className="feedback too-far">
+                <div className="feedback-icon">
+                  <FaArrowUp />
+                </div>
+                <p>Move slightly closer to the camera</p>
+              </div>
+            )}
+            {distanceStatus === "optimal" && (
+              <div className="feedback optimal">
+                <div className="feedback-icon">
+                  <FaCheckCircle />
+                </div>
+                <p>Perfect distance! Ready to capture</p>
+              </div>
+            )}
+          </div>
 
-        <div className="orientation-feedback">
-          {orientationStatus === "checking" && (
-            <div className="feedback checking">
-              <div className="feedback-icon">🔍</div>
-              <p>Checking face position...</p>
-            </div>
-          )}
-          {orientationStatus === "straight" && (
-            <div className="feedback optimal">
-              <div className="feedback-icon">✅</div>
-              <p>Face position perfect!</p>
-            </div>
-          )}
-          {orientationStatus === "turnLeft" && (
-            <div className="feedback too-close">
-              <div className="feedback-icon">↪️</div>
-              <p>Turn your face slightly to the right</p>
-            </div>
-          )}
-          {orientationStatus === "turnRight" && (
-            <div className="feedback too-close">
-              <div className="feedback-icon">↩️</div>
-              <p>Turn your face slightly to the left</p>
-            </div>
-          )}
-          {orientationStatus === "tilted" && (
-            <div className="feedback too-close">
-              <div className="feedback-icon">↪️</div>
-              <p>Level your head horizontally</p>
-            </div>
-          )}
-        </div>
+          <div className="orientation-feedback">
+            {orientationStatus === "checking" && (
+              <div className="feedback checking">
+                <div className="feedback-icon">
+                  <FaSearch />
+                </div>
+                <p>Checking face position...</p>
+              </div>
+            )}
+            {orientationStatus === "straight" && (
+              <div className="feedback optimal">
+                <div className="feedback-icon">
+                  <FaCheckCircle />
+                </div>
+                <p>Face position perfect!</p>
+              </div>
+            )}
+            {orientationStatus === "turnLeft" && (
+              <div className="feedback too-close">
+                <div className="feedback-icon">
+                  <FaArrowRight />
+                </div>
+                <p>Turn your face slightly to the right</p>
+              </div>
+            )}
+            {orientationStatus === "turnRight" && (
+              <div className="feedback too-close">
+                <div className="feedback-icon">
+                  <FaArrowLeft />
+                </div>
+                <p>Turn your face slightly to the left</p>
+              </div>
+            )}
+            {orientationStatus === "tilted" && (
+              <div className="feedback too-close">
+                <div className="feedback-icon">
+                  <FaSyncAlt />
+                </div>
+                <p>Level your head horizontally</p>
+              </div>
+            )}
+          </div>
 
-        <div className="glasses-feedback">
-          {glassesStatus === "detected" && (
-            <div className="feedback too-close">
-              <div className="feedback-icon">👓</div>
-              <p>Please remove your glasses for accurate measurements</p>
-            </div>
-          )}
+          <div className="glasses-feedback">
+            {glassesStatus === "detected" && (
+              <div className="feedback too-close">
+                <div className="feedback-icon">
+                  <FaGlasses />
+                </div>
+                <p>Please remove your glasses for accurate measurements</p>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="capture-controls">
@@ -913,7 +1001,10 @@ const App = () => {
               glassesStatus === "detected"
             }
           >
-            <span className="icon">📷</span> Capture Measurements
+            <span className="icon">
+              <FaCamera />
+            </span>{" "}
+            Capture Measurements
           </button>
         </div>
       </div>
@@ -1018,10 +1109,16 @@ const App = () => {
 
         <div className="results-actions">
           <button className="primary-button" onClick={resetCapture}>
-            <span className="icon">↺</span> Measure Again
+            <span className="icon">
+              <FaRedo />
+            </span>{" "}
+            Measure Again
           </button>
           <button className="secondary-button">
-            <span className="icon">📧</span> Email Results
+            <span className="icon">
+              <FaEnvelope />
+            </span>{" "}
+            Email Results
           </button>
         </div>
       </div>
