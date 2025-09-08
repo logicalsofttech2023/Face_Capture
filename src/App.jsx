@@ -24,7 +24,6 @@ const App = () => {
   const [distanceStatus, setDistanceStatus] = useState("checking"); // checking, tooClose, tooFar, optimal
   const [orientationStatus, setOrientationStatus] = useState("checking"); // checking, straight, turnLeft, turnRight, tilted
   const [glassesStatus, setGlassesStatus] = useState("unknown"); // unknown, none, detected
-  
 
   // Performance optimization
   const lastFrameTimeRef = useRef(0);
@@ -509,41 +508,6 @@ const App = () => {
     }
   };
 
-  // Keep measurement history (outside calculateMeasurements)
-  const measurementsHistory = useRef([]);
-  const HISTORY_SIZE = 15; // tune this for smoothing
-
-  const smoothMeasurements = (newData) => {
-    measurementsHistory.current.push(newData);
-
-    if (measurementsHistory.current.length > HISTORY_SIZE) {
-      measurementsHistory.current.shift();
-    }
-
-    const avg = {};
-    const keys = Object.keys(newData);
-    keys.forEach((k) => {
-      if (typeof newData[k] === "object") {
-        avg[k] = {};
-        Object.keys(newData[k]).forEach((subKey) => {
-          avg[k][subKey] =
-            measurementsHistory.current.reduce(
-              (sum, item) => sum + parseFloat(item[k][subKey]),
-              0
-            ) / measurementsHistory.current.length;
-        });
-      } else {
-        avg[k] =
-          measurementsHistory.current.reduce(
-            (sum, item) => sum + parseFloat(item[k]),
-            0
-          ) / measurementsHistory.current.length;
-      }
-    });
-
-    return avg;
-  };
-
   // Webcam prediction with throttling
   const predictWebcam = async () => {
     if (
@@ -630,8 +594,7 @@ const App = () => {
           canvas
         );
         if (newMeasurements) {
-          const smoothed = smoothMeasurements(newMeasurements);
-          setMeasurements(smoothed);
+          setMeasurements(newMeasurements);
         }
 
         // Draw face landmarks with minimal styling for measurement purposes
@@ -913,19 +876,19 @@ const App = () => {
           {orientationStatus === "turnLeft" && (
             <div className="feedback too-close">
               <div className="feedback-icon">↪️</div>
-              <p>Please face directly forward (you're turned slightly right)</p>
+              <p>Turn your face slightly to the right</p>
             </div>
           )}
           {orientationStatus === "turnRight" && (
             <div className="feedback too-close">
               <div className="feedback-icon">↩️</div>
-              <p>Please face directly forward (you're turned slightly left)</p>
+              <p>Turn your face slightly to the left</p>
             </div>
           )}
           {orientationStatus === "tilted" && (
             <div className="feedback too-close">
-              <div className="feedback-icon">⚖️</div>
-              <p>Level your head - keep it straight horizontally</p>
+              <div className="feedback-icon">↪️</div>
+              <p>Level your head horizontally</p>
             </div>
           )}
         </div>
