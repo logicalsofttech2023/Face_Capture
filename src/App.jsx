@@ -24,9 +24,7 @@ const App = () => {
   const [distanceStatus, setDistanceStatus] = useState("checking"); // checking, tooClose, tooFar, optimal
   const [orientationStatus, setOrientationStatus] = useState("checking"); // checking, straight, turnLeft, turnRight, tilted
   const [glassesStatus, setGlassesStatus] = useState("unknown"); // unknown, none, detected
-  const [calibrationMode, setCalibrationMode] = useState(false);
-  const [calibrated, setCalibrated] = useState(false);
-  const pxToMmCalibrated = useRef(null);
+  
 
   // Performance optimization
   const lastFrameTimeRef = useRef(0);
@@ -149,9 +147,7 @@ const App = () => {
     );
 
     // Calculate pxToMm ratio using PD as reference (more accurate for PD measurement)
-    let pxToMm = pxToMmCalibrated.current
-      ? pxToMmCalibrated.current
-      : averagePDMm / pupilDistancePx; // fallback if not calibrated
+    let pxToMm = averagePDMm / pupilDistancePx;
 
     // Recalculate PD with calibrated ratio
     const pd = pupilDistancePx * pxToMm;
@@ -371,41 +367,6 @@ const App = () => {
     };
   };
 
-  // Perform calibration
-  const performCalibration = (landmarks, canvas) => {
-    if (!landmarks || landmarks.length === 0) return false;
-
-    const landmark = landmarks[0];
-
-    // Use outer eye corners as reference points
-    const leftEyeOuter = {
-      x: landmark[33].x * canvas.width,
-      y: landmark[33].y * canvas.height,
-    };
-
-    const rightEyeOuter = {
-      x: landmark[263].x * canvas.width,
-      y: landmark[263].y * canvas.height,
-    };
-
-    // Calculate pixel distance between eye corners
-    const pxDist = Math.sqrt(
-      Math.pow(rightEyeOuter.x - leftEyeOuter.x, 2) +
-        Math.pow(rightEyeOuter.y - leftEyeOuter.y, 2)
-    );
-
-    // Known average distance between outer eye corners is approximately 90-95mm
-    const knownWidthMm = 93; // Average inter-outer-canthal distance
-
-    // Save calibration factor
-    pxToMmCalibrated.current = knownWidthMm / pxDist;
-    setCalibrated(true);
-    setCalibrationMode(false);
-
-    console.log("✅ Calibration factor set:", pxToMmCalibrated.current);
-    return true;
-  };
-
   // Glasses detection heuristic
   const detectGlasses = (tempCtx, landmarks, canvasWidth, canvasHeight) => {
     const toPixels = (point) => ({
@@ -479,9 +440,6 @@ const App = () => {
     setGlassesStatus("unknown");
     setMeasurements(null);
     setWebcamError(null);
-    setCalibrationMode(false);
-    setCalibrated(false);
-    pxToMmCalibrated.current = null;
   };
 
   // Update the startMeasurement function
@@ -651,20 +609,6 @@ const App = () => {
 
         // Clear previous error if face is detected
         setWebcamError(null);
-
-        // Handle calibration if in calibration mode
-        if (calibrationMode) {
-          const success = performCalibration(results.faceLandmarks, canvas);
-          if (success) {
-            setWebcamError(
-              "Calibration successful! Measurements will now be more accurate."
-            );
-          } else {
-            setWebcamError(
-              "Calibration failed. Please ensure your face is clearly visible."
-            );
-          }
-        }
 
         // Glasses detection
         const tempCanvas = document.createElement("canvas");
@@ -867,50 +811,13 @@ const App = () => {
             <div className="step-icon">📏</div>
             <div className="step-content">
               <h3>Optimal Distance</h3>
-              <p>Position yourself about 50–60cm from the camera</p>
+              <p>Position yourself about 50-60cm from the camera</p>
             </div>
           </div>
-
-          {!calibrated && (
-            <div className="instruction-step">
-              <div className="step-icon">🎯</div>
-              <div className="step-content">
-                <h3>Calibrate for Accuracy</h3>
-                <p>Click the calibrate button for more precise measurements</p>
-              </div>
-            </div>
-          )}
         </div>
-
-        {/* Controls */}
-        <div className="controls">
-          {appState === "instructions" && (
-            <>
-              <button onClick={startMeasurement}>Start Measurement</button>
-              <button onClick={() => setCalibrationMode(true)}>
-                {calibrated ? "Recalibrate" : "Calibrate"}
-              </button>
-            </>
-          )}
-
-          {appState === "measuring" && (
-            <>
-              <button onClick={captureMeasurements}>
-                Capture Measurements
-              </button>
-              <button onClick={resetCapture}>Reset</button>
-              {calibrationMode && (
-                <p className="calibration-text">
-                  Please keep your face straight and steady for calibration...
-                </p>
-              )}
-            </>
-          )}
-
-          {appState === "results" && (
-            <button onClick={resetCapture}>Start Again</button>
-          )}
-        </div>
+        <button className="primary-button" onClick={startMeasurement}>
+          Start Measurement
+        </button>
       </div>
     </div>
   );
@@ -1046,20 +953,6 @@ const App = () => {
             <span className="icon">📷</span> Capture Measurements
           </button>
         </div>
-
-        <div className="calibration-controls">
-          {!calibrated ? (
-            <button
-              onClick={() => setCalibrationMode(true)}
-              className="calibrate-btn"
-              disabled={calibrationMode}
-            >
-              {calibrationMode ? "Calibrating..." : "Calibrate for Accuracy"}
-            </button>
-          ) : (
-            <p className="calibrated-msg">✅ Calibration Complete</p>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -1068,12 +961,6 @@ const App = () => {
     <div className="screen results-screen">
       <div className="screen-content">
         <h2>Your Facial Measurements</h2>
-        {calibrated && (
-          <div className="calibration-notice">
-            <span className="icon">✅</span>
-            Measurements calibrated for accuracy
-          </div>
-        )}
         <div className="measurements-grid">
           <div className="measurement-card">
             <h3>Pupillary Distance (PD)</h3>
