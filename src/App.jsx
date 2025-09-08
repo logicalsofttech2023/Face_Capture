@@ -302,15 +302,20 @@ const App = () => {
 
     // Face orientation detection
     const npdDiff = leftNpd - rightNpd;
-    const npdThreshold = 2.0; // mm
+    const npdThreshold = 3.0; // mm
     const eyeYDiff = Math.abs(leftPupil.y - rightPupil.y);
-    const rollThreshold = 10; // pixels
+    const rollThreshold = canvas.height * 0.03; // pixels
     let orientation = "checking";
     if (faceHeightPx > 0) {
       if (eyeYDiff > rollThreshold) {
         orientation = "tilted";
       } else if (Math.abs(npdDiff) > npdThreshold) {
-        orientation = npdDiff > 0 ? "turnLeft" : "turnRight";
+        const turningConfidence = Math.abs(npdDiff) / npdThreshold;
+        if (turningConfidence > 1.5) {
+          orientation = npdDiff > 0 ? "turnLeft" : "turnRight";
+        } else {
+          orientation = "straight";
+        }
       } else {
         orientation = "straight";
       }
@@ -398,7 +403,12 @@ const App = () => {
 
   // Capture final measurements
   const captureMeasurements = () => {
-    if (measurements && distanceStatus === "optimal" && orientationStatus === "straight" && glassesStatus !== "detected") {
+    if (
+      measurements &&
+      distanceStatus === "optimal" &&
+      orientationStatus === "straight" &&
+      glassesStatus !== "detected"
+    ) {
       setFinalMeasurements(measurements);
       setIsCaptured(true);
       setAppState("results");
@@ -570,7 +580,12 @@ const App = () => {
         tempCanvas.height = canvas.height;
         const tempCtx = tempCanvas.getContext("2d");
         tempCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
-        const isGlasses = detectGlasses(tempCtx, results.faceLandmarks[0], canvas.width, canvas.height);
+        const isGlasses = detectGlasses(
+          tempCtx,
+          results.faceLandmarks[0],
+          canvas.width,
+          canvas.height
+        );
         setGlassesStatus(isGlasses ? "detected" : "none");
 
         // Calculate and update measurements
@@ -861,19 +876,19 @@ const App = () => {
           {orientationStatus === "turnLeft" && (
             <div className="feedback too-close">
               <div className="feedback-icon">↪️</div>
-              <p>Turn your face slightly to the right</p>
+              <p>Please face directly forward (you're turned slightly right)</p>
             </div>
           )}
           {orientationStatus === "turnRight" && (
             <div className="feedback too-close">
               <div className="feedback-icon">↩️</div>
-              <p>Turn your face slightly to the left</p>
+              <p>Please face directly forward (you're turned slightly left)</p>
             </div>
           )}
           {orientationStatus === "tilted" && (
             <div className="feedback too-close">
-              <div className="feedback-icon">↪️</div>
-              <p>Level your head horizontally</p>
+              <div className="feedback-icon">⚖️</div>
+              <p>Level your head - keep it straight horizontally</p>
             </div>
           )}
         </div>
@@ -891,7 +906,12 @@ const App = () => {
           <button
             className="capture-button"
             onClick={captureMeasurements}
-            disabled={!measurements || distanceStatus !== "optimal" || orientationStatus !== "straight" || glassesStatus === "detected"}
+            disabled={
+              !measurements ||
+              distanceStatus !== "optimal" ||
+              orientationStatus !== "straight" ||
+              glassesStatus === "detected"
+            }
           >
             <span className="icon">📷</span> Capture Measurements
           </button>
