@@ -24,6 +24,10 @@ const App = () => {
   const [distanceStatus, setDistanceStatus] = useState("checking"); // checking, tooClose, tooFar, optimal
   const [orientationStatus, setOrientationStatus] = useState("checking"); // checking, straight, turnLeft, turnRight, tilted
   const [glassesStatus, setGlassesStatus] = useState("unknown"); // unknown, none, detected
+  // State
+  const [calibrationMode, setCalibrationMode] = useState(false);
+  const [calibrated, setCalibrated] = useState(false);
+  const pxToMmCalibrated = useRef(null);
 
   // Performance optimization
   const lastFrameTimeRef = useRef(0);
@@ -137,6 +141,31 @@ const App = () => {
     // Calculate face height in pixels using more accurate vertical measurement
     const faceHeightPx = Math.abs(chinBottom.y - foreheadTop.y);
 
+    if (calibrationMode && results.faceLandmarks) {
+      // Example: use outer eye corners (33, 263) as reference points
+      // Instead you can ask user to hold card at nose area and map bounding box pixels
+      const leftEye = results.faceLandmarks[33];
+      const rightEye = results.faceLandmarks[263];
+
+      const width = canvas.width;
+      const height = canvas.height;
+
+      const pxDist = Math.sqrt(
+        Math.pow((rightEye.x - leftEye.x) * width, 2) +
+          Math.pow((rightEye.y - leftEye.y) * height, 2)
+      );
+
+      // Known width of reference object (credit card = 85.6mm)
+      const knownWidthMm = 85.6;
+
+      // Save calibration factor
+      pxToMmCalibrated.current = knownWidthMm / pxDist;
+      setCalibrated(true);
+      setCalibrationMode(false);
+
+      console.log("✅ Calibration factor set:", pxToMmCalibrated.current);
+    }
+
     // Use interpupillary distance as reference (more stable than face height)
     // Average PD is ~62mm for adults, use this for calibration
     const averagePDMm = 62;
@@ -146,7 +175,9 @@ const App = () => {
     );
 
     // Calculate pxToMm ratio using PD as reference (more accurate for PD measurement)
-    let pxToMm = averagePDMm / pupilDistancePx;
+    let pxToMm = pxToMmCalibrated.current
+      ? pxToMmCalibrated.current
+      : 62 / pupilDistancePx;
 
     // Recalculate PD with calibrated ratio
     const pd = pupilDistancePx * pxToMm;
@@ -951,6 +982,19 @@ const App = () => {
           >
             <span className="icon">📷</span> Capture Measurements
           </button>
+        </div>
+
+        <div className="calibration-controls">
+          {!calibrated ? (
+            <button
+              onClick={() => setCalibrationMode(true)}
+              className="calibrate-btn"
+            >
+              Calibrate with Credit Card
+            </button>
+          ) : (
+            <p className="calibrated-msg">✅ Calibration Done</p>
+          )}
         </div>
       </div>
     </div>
