@@ -10,6 +10,7 @@ import {
   FaRedo,
   FaEnvelope,
   FaCheckCircle,
+  FaExclamationTriangle,
   FaSearch,
   FaArrowUp,
   FaArrowDown,
@@ -36,23 +37,20 @@ const App = () => {
   const [measurements, setMeasurements] = useState(null);
   const [finalMeasurements, setFinalMeasurements] = useState(null);
   const [isCaptured, setIsCaptured] = useState(false);
-  const [appState, setAppState] = useState("instructions");
-  const [distanceStatus, setDistanceStatus] = useState("checking");
-  const [orientationStatus, setOrientationStatus] = useState("checking");
-  const [glassesStatus, setGlassesStatus] = useState("unknown");
+  const [appState, setAppState] = useState("instructions"); // instructions, measuring, results
+  const [distanceStatus, setDistanceStatus] = useState("checking"); // checking, tooClose, tooFar, optimal
+  const [orientationStatus, setOrientationStatus] = useState("checking"); // checking, straight, turnLeft, turnRight, tilted
+  const [glassesStatus, setGlassesStatus] = useState("unknown"); // unknown, none, detected
   const [currentInstruction, setCurrentInstruction] = useState(0);
-  const [cameraFacingMode, setCameraFacingMode] = useState("user"); // 'user' for front, 'environment' for back
-  const [availableCameras, setAvailableCameras] = useState([]);
-  const [currentCameraId, setCurrentCameraId] = useState("");
-  const optimalFaceHeightPx = useRef(null);
-  const shapeSmootherRef = useRef({ current: { map: {} } });
 
   // Performance optimization
   const lastFrameTimeRef = useRef(0);
   const frameCountRef = useRef(0);
   const lastFpsUpdateRef = useRef(0);
   const minFrameInterval = 100;
+  const optimalFaceHeightPx = useRef(0);
 
+  // Instructions data
   const instructions = [
     {
       icon: <FaLightbulb className="instruction-icon" />,
@@ -110,29 +108,6 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    const getCameras = async () => {
-      try {
-        if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          const videoDevices = devices.filter(
-            (device) => device.kind === "videoinput"
-          );
-          setAvailableCameras(videoDevices);
-
-          // Set default camera if available
-          if (videoDevices.length > 0) {
-            setCurrentCameraId(videoDevices[0].deviceId);
-          }
-        }
-      } catch (error) {
-        console.error("Error enumerating devices:", error);
-      }
-    };
-
-    getCameras();
-  }, []);
-
-  useEffect(() => {
     if (appState === "instructions") {
       const interval = setInterval(() => {
         setCurrentInstruction((prev) => (prev + 1) % instructions.length);
@@ -142,23 +117,20 @@ const App = () => {
     }
   }, [appState, instructions.length]);
 
-  // Helper: relative difference (fraction)
   const relDiff = (a, b) => {
     if (!a || !b) return 1.0;
     return Math.abs(a - b) / ((a + b) / 2);
   };
 
-  // Shape smoother (majority vote style with decay)
   const smoothShape = (ref, newShape) => {
+    // simple majority / persistence technique
     if (!ref.current.map) ref.current.map = {};
     ref.current.map[newShape] = (ref.current.map[newShape] || 0) + 1;
-
     // decay counts
     Object.keys(ref.current.map).forEach((k) => {
       ref.current.map[k] = Math.max(0, ref.current.map[k] - 0.2);
       if (ref.current.map[k] < 0.01) delete ref.current.map[k];
     });
-
     // pick max
     let best = null,
       bestCount = -1;
@@ -171,76 +143,206 @@ const App = () => {
     return best || newShape;
   };
 
-  // Calculate measurements
-  const calculateMeasurements = (
-    landmarks,
-    canvas,
-    optimalFaceHeightPx = { current: null },
-    shapeSmootherRef = { current: { map: {} } }
-  ) => {
+  // Calculate measurements from landmarks
+  const calculateMeasurements = (landmarks, canvas) => {
     if (!landmarks || landmarks.length === 0) return null;
-    const lm = landmarks[0];
 
-    const toPixels = (p) => ({ x: p.x * canvas.width, y: p.y * canvas.height });
-    const avgPoints = (indices) => {
-      let sx = 0,
-        sy = 0;
-      indices.forEach((i) => {
-        sx += lm[i].x;
-        sy += lm[i].y;
-      });
-      return { x: sx / indices.length, y: sy / indices.length };
+    const landmark = landmarks[0];
+
+    // Convert normalized coordinates to pixel coordinates
+    const toPixels = (point) => {
+      return {
+        x: point.x * canvas.width,
+        y: point.y * canvas.height,
+      };
     };
 
-    // Eye centers
-    const leftEyeCenterN = avgPoints([33, 133, 157, 158, 159, 160, 161, 246]);
-    const rightEyeCenterN = avgPoints([263, 362, 373, 374, 380, 381, 382, 466]);
-    const leftPupil = toPixels(leftEyeCenterN);
-    const rightPupil = toPixels(rightEyeCenterN);
+    // Get more accurate eye center points
+    const leftEyeCenter = {
+      x:
+        (landmark[33].x +
+          landmark[133].x +
+          landmark[157].x +
+          landmark[158].x +
+          landmark[159].x +
+          landmark[160].x +
+          landmark[161].x +
+          landmark[246].x) /
+        8,
+      y:
+        (landmark[33].y +
+          landmark[133].y +
+          landmark[157].y +
+          landmark[158].y +
+          landmark[159].y +
+          landmark[160].y +
+          landmark[161].y +
+          landmark[246].y) /
+        8,
+    };
 
-    // Stable vertical refs
-    const foreheadTop = toPixels(lm[10]);
-    const chinBottom = toPixels(lm[152]);
+    const rightEyeCenter = {
+      x:
+        (landmark[263].x +
+          landmark[362].x +
+          landmark[373].x +
+          landmark[374].x +
+          landmark[380].x +
+          landmark[381].x +
+          landmark[382].x +
+          landmark[466].x) /
+        8,
+      y:
+        (landmark[263].y +
+          landmark[362].y +
+          landmark[373].y +
+          landmark[374].y +
+          landmark[380].y +
+          landmark[381].y +
+          landmark[382].y +
+          landmark[466].y) /
+        8,
+    };
+
+    // Convert to pixels
+    const leftPupil = toPixels(leftEyeCenter);
+    const rightPupil = toPixels(rightEyeCenter);
+
+    // Calculate face height using more stable reference points
+    const foreheadTop = toPixels(landmark[10]); // Forehead top
+    const chinBottom = toPixels(landmark[152]); // Chin bottom
+
+    // Calculate face height in pixels using more accurate vertical measurement
     const faceHeightPx = Math.abs(chinBottom.y - foreheadTop.y);
 
-    // Widths
-    const jawLeft = toPixels(lm[234]);
-    const jawRight = toPixels(lm[454]);
-    const faceWidthPx = Math.abs(jawRight.x - jawLeft.x);
+    // Use interpupillary distance as reference (more stable than face height)
+    // Average PD is ~62mm for adults, use this for calibration
+    const averagePDMm = 62;
+    const pupilDistancePx = Math.sqrt(
+      Math.pow(rightPupil.x - leftPupil.x, 2) +
+        Math.pow(rightPupil.y - leftPupil.y, 2)
+    );
 
-    const leftCheek = toPixels(lm[123]);
-    const rightCheek = toPixels(lm[352]);
-    const cheekboneWidthPx = Math.abs(rightCheek.x - leftCheek.x);
+    // Calculate pxToMm ratio using PD as reference (more accurate for PD measurement)
+    let pxToMm = averagePDMm / pupilDistancePx;
 
-    const jawMidLeft = toPixels(lm[131]);
-    const jawMidRight = toPixels(lm[371]);
-    const jawWidthPx = Math.abs(jawMidRight.x - jawMidLeft.x);
+    // Recalculate PD with calibrated ratio
+    const pd = pupilDistancePx * pxToMm;
 
-    const leftTemple = toPixels(lm[21]);
-    const rightTemple = toPixels(lm[251]);
-    const foreheadWidthPx = Math.abs(rightTemple.x - leftTemple.x);
+    // Calculate face width for additional validation
+    const faceLeft = toPixels(landmark[234]); // Left face edge
+    const faceRight = toPixels(landmark[454]); // Right face edge
+    const faceWidthPx = Math.abs(faceRight.x - faceLeft.x);
 
-    // Ratios
-    const faceRatio = faceWidthPx / (faceHeightPx || 1);
-    const cheekboneToFace = cheekboneWidthPx / (faceWidthPx || 1);
-    const jawToFace = jawWidthPx / (faceWidthPx || 1);
-    const foreheadToFace = foreheadWidthPx / (faceWidthPx || 1);
+    // Validate measurements - face width should be reasonable (typically 1.3-1.5x face height)
+    const faceWidthMm = faceWidthPx * pxToMm;
+    const faceHeightMm = faceHeightPx * pxToMm;
 
-    const cheek_jaw_rel = relDiff(cheekboneWidthPx, jawWidthPx);
-    const forehead_jaw_rel = relDiff(foreheadWidthPx, jawWidthPx);
-    const cheek_forehead_rel = relDiff(cheekboneWidthPx, foreheadWidthPx);
+    // If measurements seem unreasonable, fall back to face height reference
+    if (
+      faceWidthMm < 100 ||
+      faceWidthMm > 200 ||
+      faceHeightMm < 150 ||
+      faceHeightMm > 250
+    ) {
+      // Use face height as reference instead
+      const averageFaceHeightMm = 190;
+      pxToMm = averageFaceHeightMm / faceHeightPx;
+    }
 
-    // Orientation
-    const eyeYDiff = Math.abs(leftPupil.y - rightPupil.y);
-    const rollRel = eyeYDiff / (faceHeightPx || 1);
-    let orientation = "straight";
-    if (rollRel > 0.03) orientation = "tilted";
+    // Calculate NPD (Naso-Pupillary Distance)
+    const noseTip = toPixels(landmark[4]); // Nose tip
+    const leftNpd =
+      Math.sqrt(
+        Math.pow(leftPupil.x - noseTip.x, 2) +
+          Math.pow(leftPupil.y - noseTip.y, 2)
+      ) * pxToMm;
 
-    // Distance status
+    const rightNpd =
+      Math.sqrt(
+        Math.pow(rightPupil.x - noseTip.x, 2) +
+          Math.pow(rightPupil.y - noseTip.y, 2)
+      ) * pxToMm;
+
+    // Calculate eye opening height
+    const leftEyeTop = toPixels(landmark[159]); // Left eye top
+    const leftEyeBottom = toPixels(landmark[145]); // Left eye bottom
+    const leftEyeHeight = Math.abs(leftEyeTop.y - leftEyeBottom.y) * pxToMm;
+
+    const rightEyeTop = toPixels(landmark[386]); // Right eye top
+    const rightEyeBottom = toPixels(landmark[374]); // Right eye bottom
+    const rightEyeHeight = Math.abs(rightEyeTop.y - rightEyeBottom.y) * pxToMm;
+
+    // Calculate pupil height (relative to eye corners)
+    const leftEyeInner = toPixels(landmark[133]); // Left eye inner corner
+    const leftEyeOuter = toPixels(landmark[33]); // Left eye outer corner
+    const leftPupilHeight =
+      Math.abs(leftPupil.y - (leftEyeInner.y + leftEyeOuter.y) / 2) * pxToMm;
+
+    const rightEyeInner = toPixels(landmark[362]); // Right eye inner corner
+    const rightEyeOuter = toPixels(landmark[263]); // Right eye outer corner
+    const rightPupilHeight =
+      Math.abs(rightPupil.y - (rightEyeInner.y + rightEyeOuter.y) / 2) * pxToMm;
+
+    // FIXED face shape detection
+    const jawLeft = toPixels(landmark[234]);
+    const jawRight = toPixels(landmark[454]);
+
+    // Calculate face width and height in mm
+    const faceWidth = Math.abs(jawRight.x - jawLeft.x) * pxToMm;
+    const faceHeight = Math.abs(chinBottom.y - foreheadTop.y) * pxToMm;
+
+    // Get cheekbone width
+    const leftCheek = toPixels(landmark[123]);
+    const rightCheek = toPixels(landmark[352]);
+    const cheekboneWidth = Math.abs(rightCheek.x - leftCheek.x) * pxToMm;
+
+    // Get jaw width at different points
+    const jawMidLeft = toPixels(landmark[131]);
+    const jawMidRight = toPixels(landmark[371]);
+    const jawWidth = Math.abs(jawMidRight.x - jawMidLeft.x) * pxToMm;
+
+    // Get forehead width
+    const leftTemple = toPixels(landmark[21]);
+    const rightTemple = toPixels(landmark[251]);
+    const foreheadWidth = Math.abs(rightTemple.x - leftTemple.x) * pxToMm;
+
+    // Calculate ratios for face shape detection
+    const faceRatio = faceWidth / faceHeight;
+    const cheekboneJawRatio = cheekboneWidth / faceWidth;
+    const foreheadJawRatio = foreheadWidth / jawWidth;
+
+    // Improved face shape classification
+    let faceShape = "Oval";
+
+    if (
+      faceRatio > 0.85 &&
+      foreheadJawRatio > 0.85 &&
+      cheekboneJawRatio > 0.85
+    ) {
+      faceShape = "Round";
+    } else if (faceRatio < 0.75) {
+      faceShape = "Long";
+    } else if (
+      Math.abs(foreheadWidth - jawWidth) < 5 &&
+      Math.abs(cheekboneWidth - jawWidth) < 5
+    ) {
+      faceShape = "Square";
+    } else if (foreheadWidth > cheekboneWidth && cheekboneWidth > jawWidth) {
+      faceShape = "Heart";
+    } else if (cheekboneWidth > foreheadWidth && cheekboneWidth > jawWidth) {
+      faceShape = "Diamond";
+    } else if (jawWidth > cheekboneWidth && jawWidth > foreheadWidth) {
+      faceShape = "Triangle";
+    }
+
+    // Check distance based on face height in pixels
     let distanceStatus = "checking";
     if (faceHeightPx > 0) {
-      const opt = canvas.height * 0.6;
-      if (!optimalFaceHeightPx.current) optimalFaceHeightPx.current = opt;
+      if (!optimalFaceHeightPx.current) {
+        // Set optimal face height based on canvas height (around 60% of canvas height)
+        optimalFaceHeightPx.current = canvas.height * 0.6;
+      }
 
       if (faceHeightPx > optimalFaceHeightPx.current * 1.2) {
         distanceStatus = "tooClose";
@@ -251,88 +353,66 @@ const App = () => {
       }
     }
 
-    // Face shape classification
-    let faceShape = "Oval";
-    if (faceHeightPx / (faceWidthPx || 1) > 1.18) {
-      faceShape = "Long";
-    } else if (
-      cheek_jaw_rel < 0.08 &&
-      forehead_jaw_rel < 0.08 &&
-      cheek_forehead_rel < 0.08
-    ) {
-      faceShape = "Square";
-    } else if (
-      cheekboneWidthPx > foreheadWidthPx &&
-      cheekboneWidthPx > jawWidthPx &&
-      cheekboneWidthPx / faceWidthPx > 0.34
-    ) {
-      faceShape = "Diamond";
-    } else if (
-      foreheadWidthPx > cheekboneWidthPx &&
-      foreheadWidthPx > jawWidthPx &&
-      relDiff(foreheadWidthPx, cheekboneWidthPx) > 0.05
-    ) {
-      faceShape = "Heart";
-    } else if (jawWidthPx > cheekboneWidthPx && jawWidthPx > foreheadWidthPx) {
-      faceShape = "Triangle";
-    } else if (
-      relDiff(faceWidthPx, faceHeightPx) < 0.12 &&
-      cheek_jaw_rel < 0.12
-    ) {
-      faceShape = "Round";
+    // Face orientation detection
+    const npdDiff = leftNpd - rightNpd;
+    const npdThreshold = 3.0; // mm
+    const eyeYDiff = Math.abs(leftPupil.y - rightPupil.y);
+    const rollThreshold = canvas.height * 0.03; // pixels
+    let orientation = "checking";
+    if (faceHeightPx > 0) {
+      if (eyeYDiff > rollThreshold) {
+        orientation = "tilted";
+      } else if (Math.abs(npdDiff) > npdThreshold) {
+        const turningConfidence = Math.abs(npdDiff) / npdThreshold;
+        if (turningConfidence > 1.5) {
+          orientation = npdDiff > 0 ? "turnLeft" : "turnRight";
+        } else {
+          orientation = "straight";
+        }
+      } else {
+        orientation = "straight";
+      }
     }
 
-    // 🔹 Apply smoothing before return
-    if (shapeSmootherRef) {
-      faceShape = smoothShape(shapeSmootherRef, faceShape);
-    }
+    // Validate measurements
+    const validateMeasurement = (value, min, max) => {
+      return value >= min && value <= max;
+    };
 
-    // PD / NPD
-    const pupilDistancePx = Math.hypot(
-      rightPupil.x - leftPupil.x,
-      rightPupil.y - leftPupil.y
-    );
-    const noseTip = toPixels(lm[4]);
-    const leftNpdPx = Math.hypot(
-      leftPupil.x - noseTip.x,
-      leftPupil.y - noseTip.y
-    );
-    const rightNpdPx = Math.hypot(
-      rightPupil.x - noseTip.x,
-      rightPupil.y - noseTip.y
-    );
-
-    // Eye heights
-    const leftEyeTop = toPixels(lm[159]);
-    const leftEyeBottom = toPixels(lm[145]);
-    const leftEyeHeightPx = Math.abs(leftEyeTop.y - leftEyeBottom.y);
-
-    const rightEyeTop = toPixels(lm[386]);
-    const rightEyeBottom = toPixels(lm[374]);
-    const rightEyeHeightPx = Math.abs(rightEyeTop.y - rightEyeBottom.y);
-
-    // Validation
     const isValid =
+      validateMeasurement(pd, 50, 80) &&
+      validateMeasurement(leftNpd, 20, 40) &&
+      validateMeasurement(rightNpd, 20, 40) &&
       distanceStatus === "optimal" &&
-      orientation === "straight" &&
-      pupilDistancePx > 10;
+      orientation === "straight";
+
+    if (!isValid) {
+      console.warn("Measurements outside expected ranges:", {
+        pd,
+        leftNpd,
+        rightNpd,
+      });
+    }
 
     return {
-      pdPx: pupilDistancePx.toFixed(1),
-      npdPx: { left: leftNpdPx.toFixed(1), right: rightNpdPx.toFixed(1) },
-      eyeHeightPx: {
-        left: leftEyeHeightPx.toFixed(1),
-        right: rightEyeHeightPx.toFixed(1),
+      pd: pd.toFixed(1),
+      npd: {
+        left: leftNpd.toFixed(1),
+        right: rightNpd.toFixed(1),
+      },
+      eyeHeight: {
+        left: leftEyeHeight.toFixed(1),
+        right: rightEyeHeight.toFixed(1),
+      },
+      pupilHeight: {
+        left: leftPupilHeight.toFixed(1),
+        right: rightPupilHeight.toFixed(1),
+        combined: ((leftPupilHeight + rightPupilHeight) / 2).toFixed(1),
       },
       faceShape,
-      faceWidthPx: faceWidthPx.toFixed(1),
-      faceHeightPx: faceHeightPx.toFixed(1),
-      ratios: {
-        faceRatio: faceRatio.toFixed(3),
-        cheekboneToFace: cheekboneToFace.toFixed(3),
-        jawToFace: jawToFace.toFixed(3),
-        foreheadToFace: foreheadToFace.toFixed(3),
-      },
+      faceWidth: faceWidth.toFixed(1),
+      faceLength: faceHeight.toFixed(1),
+      faceHeightPx,
       distanceStatus,
       orientation,
       isValid,
@@ -446,19 +526,12 @@ const App = () => {
 
       const constraints = {
         video: {
+          facingMode: "user",
           width: { ideal: 640 },
           height: { ideal: 480 },
           frameRate: { ideal: 30 },
         },
       };
-
-      // Add deviceId constraint if a specific camera is selected
-      if (currentCameraId) {
-        constraints.video.deviceId = { exact: currentCameraId };
-      } else {
-        // Fallback to facingMode if deviceId is not available
-        constraints.video.facingMode = cameraFacingMode;
-      }
 
       try {
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -486,36 +559,6 @@ const App = () => {
         setWebcamRunning(false);
       }
     }
-  };
-
-  const switchCamera = async () => {
-    if (!webcamRunning) return;
-
-    // Stop current webcam
-    if (webcamRef.current && webcamRef.current.srcObject) {
-      const tracks = webcamRef.current.srcObject.getTracks();
-      tracks.forEach((track) => track.stop());
-      webcamRef.current.srcObject = null;
-    }
-
-    // Toggle between front and back camera
-    if (availableCameras.length > 1) {
-      // Cycle through available cameras
-      const currentIndex = availableCameras.findIndex(
-        (cam) => cam.deviceId === currentCameraId
-      );
-      const nextIndex = (currentIndex + 1) % availableCameras.length;
-      setCurrentCameraId(availableCameras[nextIndex].deviceId);
-    } else {
-      // Fallback to facingMode toggle if we don't have multiple cameras enumerated
-      setCameraFacingMode((prevMode) =>
-        prevMode === "user" ? "environment" : "user"
-      );
-    }
-
-    // Restart webcam with new constraints
-    await new Promise((resolve) => setTimeout(resolve, 100)); // Small delay
-    toggleWebcam();
   };
 
   // Webcam prediction with throttling
@@ -601,9 +644,7 @@ const App = () => {
         // Calculate and update measurements
         const newMeasurements = calculateMeasurements(
           results.faceLandmarks,
-          canvas,
-          optimalFaceHeightPx,
-          shapeSmootherRef
+          canvas
         );
         if (newMeasurements) {
           setMeasurements(newMeasurements);
@@ -817,11 +858,6 @@ const App = () => {
             </span>{" "}
             Stop Measurement
           </button>
-          {availableCameras.length > 1 && (
-            <button className="camera-switch" onClick={switchCamera}>
-              <span className="icon"></span> Switch Camera
-            </button>
-          )}
 
           <div className="fps-counter">FPS: {fps}</div>
         </div>
@@ -982,7 +1018,7 @@ const App = () => {
       <div className="measurements-grid">
         <div className="measurement-card">
           <h3>Pupillary Distance (PD)</h3>
-          <div className="measurement-value">{finalMeasurements.pdPx} px</div>
+            <div className="measurement-value">{finalMeasurements.pd} mm</div>
           <p className="measurement-desc">Distance between pupils</p>
         </div>
 
@@ -991,11 +1027,11 @@ const App = () => {
           <div className="measurement-subvalues">
             <div>
               <span className="label">Left Eye:</span>
-              <span className="value">{finalMeasurements.npdPx.left} px</span>
+                <span className="value">{finalMeasurements.npd.left} mm</span>
             </div>
             <div>
               <span className="label">Right Eye:</span>
-              <span className="value">{finalMeasurements.npdPx.right} px</span>
+                <span className="value">{finalMeasurements.npd.right} mm</span>
             </div>
           </div>
           <p className="measurement-desc">Distance from nose to each pupil</p>
@@ -1007,13 +1043,13 @@ const App = () => {
             <div>
               <span className="label">Left Eye:</span>
               <span className="value">
-                {finalMeasurements.eyeHeightPx.left} px
+                  {finalMeasurements.eyeHeight.left} mm
               </span>
             </div>
             <div>
               <span className="label">Right Eye:</span>
               <span className="value">
-                {finalMeasurements.eyeHeightPx.right} px
+                  {finalMeasurements.eyeHeight.right} mm
               </span>
             </div>
           </div>
@@ -1021,49 +1057,43 @@ const App = () => {
         </div>
 
         <div className="measurement-card">
-          <h3>Face Dimensions</h3>
+            <h3>Pupil Height</h3>
           <div className="measurement-subvalues">
             <div>
-              <span className="label">Width:</span>
-              <span className="value">{finalMeasurements.faceWidthPx} px</span>
+                <span className="label">Left Eye:</span>
+              <span className="value">
+                  {finalMeasurements.pupilHeight.left} mm
+              </span>
             </div>
             <div>
-              <span className="label">Height:</span>
-              <span className="value">{finalMeasurements.faceHeightPx} px</span>
+                <span className="label">Right Eye:</span>
+              <span className="value">
+                  {finalMeasurements.pupilHeight.right} mm
+              </span>
             </div>
+            <div>
+                <span className="label">Combined:</span>
+              <span className="value">
+                  {finalMeasurements.pupilHeight.combined} mm
+              </span>
+            </div>
+            </div>
+            <p className="measurement-desc">Vertical position of pupils</p>
           </div>
-          <p className="measurement-desc">Basic face measurements</p>
-        </div>
 
-        <div className="measurement-card">
-          <h3>Face Ratios</h3>
-          <div className="measurement-subvalues">
+          <div className="measurement-card">
+            <h3>Face Dimensions</h3>
+            <div className="measurement-subvalues">
             <div>
-              <span className="label">Face Ratio:</span>
-              <span className="value">
-                {finalMeasurements.ratios.faceRatio}
-              </span>
+                <span className="label">Width:</span>
+                <span className="value">{finalMeasurements.faceWidth} mm</span>
             </div>
-            <div>
-              <span className="label">Cheekbone/Face:</span>
-              <span className="value">
-                {finalMeasurements.ratios.cheekboneToFace}
-              </span>
-            </div>
-            <div>
-              <span className="label">Jaw/Face:</span>
-              <span className="value">
-                {finalMeasurements.ratios.jawToFace}
-              </span>
-            </div>
-            <div>
-              <span className="label">Forehead/Face:</span>
-              <span className="value">
-                {finalMeasurements.ratios.foreheadToFace}
-              </span>
-            </div>
+              <div>
+                <span className="label">Length:</span>
+                <span className="value">{finalMeasurements.faceLength} mm</span>
           </div>
-          <p className="measurement-desc">Facial proportion ratios</p>
+            </div>
+            <p className="measurement-desc">Basic face measurements</p>
         </div>
 
         <div className="measurement-card">
@@ -1123,7 +1153,7 @@ const App = () => {
           <>
             {appState === "instructions" && renderInstructionsScreen()}
             {appState === "measuring" && renderMeasuringScreen()}
-            {appState === "results" && finalMeasurements && renderResultsScreen()}
+            {appState === "results" && renderResultsScreen()}
           </>
         )}
       </main>
