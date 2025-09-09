@@ -44,6 +44,8 @@ const App = () => {
   const [cameraFacingMode, setCameraFacingMode] = useState("user"); // 'user' for front, 'environment' for back
   const [availableCameras, setAvailableCameras] = useState([]);
   const [currentCameraId, setCurrentCameraId] = useState("");
+  const optimalFaceHeightPx = useRef(null);
+  const shapeSmootherRef = useRef({ current: { map: {} } });
 
   // Performance optimization
   const lastFrameTimeRef = useRef(0);
@@ -173,8 +175,8 @@ const App = () => {
   const calculateMeasurements = (
     landmarks,
     canvas,
-    optimalFaceHeightPx,
-    shapeSmootherRef
+    optimalFaceHeightPx = { current: null },
+    shapeSmootherRef = { current: { map: {} } }
   ) => {
     if (!landmarks || landmarks.length === 0) return null;
     const lm = landmarks[0];
@@ -599,7 +601,9 @@ const App = () => {
         // Calculate and update measurements
         const newMeasurements = calculateMeasurements(
           results.faceLandmarks,
-          canvas
+          canvas,
+          optimalFaceHeightPx,
+          shapeSmootherRef
         );
         if (newMeasurements) {
           setMeasurements(newMeasurements);
@@ -815,10 +819,7 @@ const App = () => {
           </button>
           {availableCameras.length > 1 && (
             <button className="camera-switch" onClick={switchCamera}>
-              <span className="icon">
-                
-              </span>{" "}
-              Switch Camera
+              <span className="icon"></span> Switch Camera
             </button>
           )}
 
