@@ -976,118 +976,124 @@ const App = () => {
   );
 
   const renderResultsScreen = () => (
-    <div className="screen results-screen">
-      <div className="screen-content">
-        <h2>Your Facial Measurements</h2>
-        <div className="measurements-grid">
-          <div className="measurement-card">
-            <h3>Pupillary Distance (PD)</h3>
-            <div className="measurement-value">{finalMeasurements.pd} mm</div>
-            <p className="measurement-desc">Distance between pupils</p>
-          </div>
-
-          <div className="measurement-card">
-            <h3>Naso-Pupillary Distance (NPD)</h3>
-            <div className="measurement-subvalues">
-              <div>
-                <span className="label">Left Eye:</span>
-                <span className="value">{finalMeasurements.npd.left} mm</span>
-              </div>
-              <div>
-                <span className="label">Right Eye:</span>
-                <span className="value">{finalMeasurements.npd.right} mm</span>
-              </div>
-            </div>
-            <p className="measurement-desc">Distance from nose to each pupil</p>
-          </div>
-
-          <div className="measurement-card">
-            <h3>Eye Opening Height</h3>
-            <div className="measurement-subvalues">
-              <div>
-                <span className="label">Left Eye:</span>
-                <span className="value">
-                  {finalMeasurements.eyeHeight.left} mm
-                </span>
-              </div>
-              <div>
-                <span className="label">Right Eye:</span>
-                <span className="value">
-                  {finalMeasurements.eyeHeight.right} mm
-                </span>
-              </div>
-            </div>
-            <p className="measurement-desc">Vertical opening of eyes</p>
-          </div>
-
-          <div className="measurement-card">
-            <h3>Pupil Height</h3>
-            <div className="measurement-subvalues">
-              <div>
-                <span className="label">Left Eye:</span>
-                <span className="value">
-                  {finalMeasurements.pupilHeight.left} mm
-                </span>
-              </div>
-              <div>
-                <span className="label">Right Eye:</span>
-                <span className="value">
-                  {finalMeasurements.pupilHeight.right} mm
-                </span>
-              </div>
-              <div>
-                <span className="label">Combined:</span>
-                <span className="value">
-                  {finalMeasurements.pupilHeight.combined} mm
-                </span>
-              </div>
-            </div>
-            <p className="measurement-desc">Vertical position of pupils</p>
-          </div>
-
-          <div className="measurement-card">
-            <h3>Face Dimensions</h3>
-            <div className="measurement-subvalues">
-              <div>
-                <span className="label">Width:</span>
-                <span className="value">{finalMeasurements.faceWidth} mm</span>
-              </div>
-              <div>
-                <span className="label">Length:</span>
-                <span className="value">{finalMeasurements.faceLength} mm</span>
-              </div>
-            </div>
-            <p className="measurement-desc">Basic face measurements</p>
-          </div>
-
-          <div className="measurement-card">
-            <h3>Face Shape</h3>
-            <div className="measurement-value shape">
-              {finalMeasurements.faceShape}
-            </div>
-            <p className="measurement-desc">
-              Classification based on proportions
-            </p>
-          </div>
+  <div className="screen results-screen">
+    <div className="screen-content">
+      <h2>Your Facial Measurements</h2>
+      <div className="measurements-grid">
+        <div className="measurement-card">
+          <h3>Pupillary Distance (PD)</h3>
+          <div className="measurement-value">{finalMeasurements.pdPx} px</div>
+          <p className="measurement-desc">Distance between pupils</p>
         </div>
 
-        <div className="results-actions">
-          <button className="primary-button" onClick={resetCapture}>
-            <span className="icon">
-              <FaRedo />
-            </span>{" "}
-            Measure Again
-          </button>
-          <button className="secondary-button">
-            <span className="icon">
-              <FaEnvelope />
-            </span>{" "}
-            Email Results
-          </button>
+        <div className="measurement-card">
+          <h3>Naso-Pupillary Distance (NPD)</h3>
+          <div className="measurement-subvalues">
+            <div>
+              <span className="label">Left Eye:</span>
+              <span className="value">{finalMeasurements.npdPx.left} px</span>
+            </div>
+            <div>
+              <span className="label">Right Eye:</span>
+              <span className="value">{finalMeasurements.npdPx.right} px</span>
+            </div>
+          </div>
+          <p className="measurement-desc">Distance from nose to each pupil</p>
+        </div>
+
+        <div className="measurement-card">
+          <h3>Eye Opening Height</h3>
+          <div className="measurement-subvalues">
+            <div>
+              <span className="label">Left Eye:</span>
+              <span className="value">
+                {finalMeasurements.eyeHeightPx.left} px
+              </span>
+            </div>
+            <div>
+              <span className="label">Right Eye:</span>
+              <span className="value">
+                {finalMeasurements.eyeHeightPx.right} px
+              </span>
+            </div>
+          </div>
+          <p className="measurement-desc">Vertical opening of eyes</p>
+        </div>
+
+        <div className="measurement-card">
+          <h3>Face Dimensions</h3>
+          <div className="measurement-subvalues">
+            <div>
+              <span className="label">Width:</span>
+              <span className="value">{finalMeasurements.faceWidthPx} px</span>
+            </div>
+            <div>
+              <span className="label">Height:</span>
+              <span className="value">{finalMeasurements.faceHeightPx} px</span>
+            </div>
+          </div>
+          <p className="measurement-desc">Basic face measurements</p>
+        </div>
+
+        <div className="measurement-card">
+          <h3>Face Ratios</h3>
+          <div className="measurement-subvalues">
+            <div>
+              <span className="label">Face Ratio:</span>
+              <span className="value">
+                {finalMeasurements.ratios.faceRatio}
+              </span>
+            </div>
+            <div>
+              <span className="label">Cheekbone/Face:</span>
+              <span className="value">
+                {finalMeasurements.ratios.cheekboneToFace}
+              </span>
+            </div>
+            <div>
+              <span className="label">Jaw/Face:</span>
+              <span className="value">
+                {finalMeasurements.ratios.jawToFace}
+              </span>
+            </div>
+            <div>
+              <span className="label">Forehead/Face:</span>
+              <span className="value">
+                {finalMeasurements.ratios.foreheadToFace}
+              </span>
+            </div>
+          </div>
+          <p className="measurement-desc">Facial proportion ratios</p>
+        </div>
+
+        <div className="measurement-card">
+          <h3>Face Shape</h3>
+          <div className="measurement-value shape">
+            {finalMeasurements.faceShape}
+          </div>
+          <p className="measurement-desc">
+            Classification based on proportions
+          </p>
         </div>
       </div>
+
+      <div className="results-actions">
+        <button className="primary-button" onClick={resetCapture}>
+          <span className="icon">
+            <FaRedo />
+          </span>{" "}
+          Measure Again
+        </button>
+        <button className="secondary-button">
+          <span className="icon">
+            <FaEnvelope />
+          </span>{" "}
+          Email Results
+        </button>
+      </div>
     </div>
-  );
+  </div>
+);
 
   return (
     <div className="app-container">
@@ -1117,7 +1123,7 @@ const App = () => {
           <>
             {appState === "instructions" && renderInstructionsScreen()}
             {appState === "measuring" && renderMeasuringScreen()}
-            {appState === "results" && renderResultsScreen()}
+            {appState === "results" && finalMeasurements && renderResultsScreen()}
           </>
         )}
       </main>
