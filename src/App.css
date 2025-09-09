@@ -743,3 +743,31 @@ body {
     height: 200px;
   }
 }
+
+
+/* Add to your App.css */
+.camera-switch {
+  background: #6c757d;
+  color: white;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+
+.camera-switch:hover {
+  background: #5a6268;
+}
+
+.webcam-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}

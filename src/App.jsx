@@ -16,6 +16,7 @@ import {
   FaArrowLeft,
   FaArrowRight,
   FaSyncAlt,
+  FaCameraRotate, // Added camera rotate icon
 } from "react-icons/fa";
 
 const App = () => {
@@ -36,11 +37,14 @@ const App = () => {
   const [measurements, setMeasurements] = useState(null);
   const [finalMeasurements, setFinalMeasurements] = useState(null);
   const [isCaptured, setIsCaptured] = useState(false);
-  const [appState, setAppState] = useState("instructions"); // instructions, measuring, results
-  const [distanceStatus, setDistanceStatus] = useState("checking"); // checking, tooClose, tooFar, optimal
-  const [orientationStatus, setOrientationStatus] = useState("checking"); // checking, straight, turnLeft, turnRight, tilted
-  const [glassesStatus, setGlassesStatus] = useState("unknown"); // unknown, none, detected
+  const [appState, setAppState] = useState("instructions");
+  const [distanceStatus, setDistanceStatus] = useState("checking");
+  const [orientationStatus, setOrientationStatus] = useState("checking");
+  const [glassesStatus, setGlassesStatus] = useState("unknown");
   const [currentInstruction, setCurrentInstruction] = useState(0);
+  const [cameraFacingMode, setCameraFacingMode] = useState("user"); // 'user' for front, 'environment' for back
+  const [availableCameras, setAvailableCameras] = useState([]);
+  const [currentCameraId, setCurrentCameraId] = useState("");
 
   // Performance optimization
   const lastFrameTimeRef = useRef(0);
@@ -48,7 +52,6 @@ const App = () => {
   const lastFpsUpdateRef = useRef(0);
   const minFrameInterval = 100;
 
-  // Instructions data
   const instructions = [
     {
       icon: <FaLightbulb className="instruction-icon" />,
@@ -103,6 +106,29 @@ const App = () => {
     };
 
     createFaceLandmarker();
+  }, []);
+
+  useEffect(() => {
+    const getCameras = async () => {
+      try {
+        if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoDevices = devices.filter(
+            (device) => device.kind === "videoinput"
+          );
+          setAvailableCameras(videoDevices);
+
+          // Set default camera if available
+          if (videoDevices.length > 0) {
+            setCurrentCameraId(videoDevices[0].deviceId);
+          }
+        }
+      } catch (error) {
+        console.error("Error enumerating devices:", error);
+      }
+    };
+
+    getCameras();
   }, []);
 
   useEffect(() => {
@@ -419,12 +445,19 @@ const App = () => {
 
       const constraints = {
         video: {
-          facingMode: "user",
           width: { ideal: 640 },
           height: { ideal: 480 },
           frameRate: { ideal: 30 },
         },
       };
+
+      // Add deviceId constraint if a specific camera is selected
+      if (currentCameraId) {
+        constraints.video.deviceId = { exact: currentCameraId };
+      } else {
+        // Fallback to facingMode if deviceId is not available
+        constraints.video.facingMode = cameraFacingMode;
+      }
 
       try {
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -452,6 +485,36 @@ const App = () => {
         setWebcamRunning(false);
       }
     }
+  };
+
+  const switchCamera = async () => {
+    if (!webcamRunning) return;
+
+    // Stop current webcam
+    if (webcamRef.current && webcamRef.current.srcObject) {
+      const tracks = webcamRef.current.srcObject.getTracks();
+      tracks.forEach((track) => track.stop());
+      webcamRef.current.srcObject = null;
+    }
+
+    // Toggle between front and back camera
+    if (availableCameras.length > 1) {
+      // Cycle through available cameras
+      const currentIndex = availableCameras.findIndex(
+        (cam) => cam.deviceId === currentCameraId
+      );
+      const nextIndex = (currentIndex + 1) % availableCameras.length;
+      setCurrentCameraId(availableCameras[nextIndex].deviceId);
+    } else {
+      // Fallback to facingMode toggle if we don't have multiple cameras enumerated
+      setCameraFacingMode((prevMode) =>
+        prevMode === "user" ? "environment" : "user"
+      );
+    }
+
+    // Restart webcam with new constraints
+    await new Promise((resolve) => setTimeout(resolve, 100)); // Small delay
+    toggleWebcam();
   };
 
   // Webcam prediction with throttling
@@ -751,6 +814,14 @@ const App = () => {
             </span>{" "}
             Stop Measurement
           </button>
+          {availableCameras.length > 1 && (
+            <button className="camera-switch" onClick={switchCamera}>
+              <span className="icon">
+                <FaCameraRotate />
+              </span>{" "}
+              Switch Camera
+            </button>
+          )}
 
           <div className="fps-counter">FPS: {fps}</div>
         </div>

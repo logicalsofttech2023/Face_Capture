@@ -1,5 +1,22 @@
 import React, { useEffect, useRef, useState } from "react";
+import "./App.css";
 import vision from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3";
+import {
+  FaLightbulb,
+  FaGlasses,
+  FaCrosshairs,
+  FaRuler,
+  FaCamera,
+  FaRedo,
+  FaEnvelope,
+  FaCheckCircle,
+  FaSearch,
+  FaArrowUp,
+  FaArrowDown,
+  FaArrowLeft,
+  FaArrowRight,
+  FaSyncAlt,
+} from "react-icons/fa";
 
 const App = () => {
   const { FaceLandmarker, FilesetResolver, DrawingUtils } = vision;
@@ -19,12 +36,41 @@ const App = () => {
   const [measurements, setMeasurements] = useState(null);
   const [finalMeasurements, setFinalMeasurements] = useState(null);
   const [isCaptured, setIsCaptured] = useState(false);
+  const [appState, setAppState] = useState("instructions"); // instructions, measuring, results
+  const [distanceStatus, setDistanceStatus] = useState("checking"); // checking, tooClose, tooFar, optimal
+  const [orientationStatus, setOrientationStatus] = useState("checking"); // checking, straight, turnLeft, turnRight, tilted
+  const [glassesStatus, setGlassesStatus] = useState("unknown"); // unknown, none, detected
+  const [currentInstruction, setCurrentInstruction] = useState(0);
 
   // Performance optimization
   const lastFrameTimeRef = useRef(0);
   const frameCountRef = useRef(0);
   const lastFpsUpdateRef = useRef(0);
   const minFrameInterval = 100;
+
+  // Instructions data
+  const instructions = [
+    {
+      icon: <FaLightbulb className="instruction-icon" />,
+      title: "Good Lighting",
+      description: "Make sure your face is well-lit without harsh shadows",
+    },
+    {
+      icon: <FaGlasses className="instruction-icon" />,
+      title: "Remove Glasses",
+      description: "Take off glasses for more accurate measurements",
+    },
+    {
+      icon: <FaCrosshairs className="instruction-icon" />,
+      title: "Position Your Face",
+      description: "Look straight at the camera with a neutral expression",
+    },
+    {
+      icon: <FaRuler className="instruction-icon" />,
+      title: "Optimal Distance",
+      description: "Position yourself about 50-60cm from the camera",
+    },
+  ];
 
   // Initialize face landmarker
   useEffect(() => {
@@ -59,189 +105,297 @@ const App = () => {
     createFaceLandmarker();
   }, []);
 
-  // Calculate measurements from landmarks
-  const calculateMeasurements = (landmarks, canvas) => {
+  useEffect(() => {
+    if (appState === "instructions") {
+      const interval = setInterval(() => {
+        setCurrentInstruction((prev) => (prev + 1) % instructions.length);
+      }, 3000);
+
+      return () => clearInterval(interval);
+    }
+  }, [appState, instructions.length]);
+
+  // Helper: relative difference (fraction)
+  const relDiff = (a, b) => {
+    if (!a || !b) return 1.0;
+    return Math.abs(a - b) / ((a + b) / 2);
+  };
+
+  // Shape smoother (majority vote style with decay)
+  const smoothShape = (ref, newShape) => {
+    if (!ref.current.map) ref.current.map = {};
+    ref.current.map[newShape] = (ref.current.map[newShape] || 0) + 1;
+
+    // decay counts
+    Object.keys(ref.current.map).forEach((k) => {
+      ref.current.map[k] = Math.max(0, ref.current.map[k] - 0.2);
+      if (ref.current.map[k] < 0.01) delete ref.current.map[k];
+    });
+
+    // pick max
+    let best = null,
+      bestCount = -1;
+    Object.entries(ref.current.map).forEach(([k, v]) => {
+      if (v > bestCount) {
+        best = k;
+        bestCount = v;
+      }
+    });
+    return best || newShape;
+  };
+
+  // Calculate measurements
+  const calculateMeasurements = (
+    landmarks,
+    canvas,
+    optimalFaceHeightPx,
+    shapeSmootherRef
+  ) => {
     if (!landmarks || landmarks.length === 0) return null;
+    const lm = landmarks[0];
 
-    const landmark = landmarks[0];
-
-    // Convert normalized coordinates to pixel coordinates
-    const toPixels = (point) => {
-      return {
-        x: point.x * canvas.width,
-        y: point.y * canvas.height,
-      };
+    const toPixels = (p) => ({ x: p.x * canvas.width, y: p.y * canvas.height });
+    const avgPoints = (indices) => {
+      let sx = 0,
+        sy = 0;
+      indices.forEach((i) => {
+        sx += lm[i].x;
+        sy += lm[i].y;
+      });
+      return { x: sx / indices.length, y: sy / indices.length };
     };
 
-    // Get key facial points
-    const leftPupil = toPixels(landmark[468]); // Left eye center
-    const rightPupil = toPixels(landmark[473]); // Right eye center
-    const noseTip = toPixels(landmark[4]); // Nose tip
-    const chin = toPixels(landmark[152]); // Chin
-    const forehead = toPixels(landmark[10]); // Forehead
+    // Eye centers
+    const leftEyeCenterN = avgPoints([33, 133, 157, 158, 159, 160, 161, 246]);
+    const rightEyeCenterN = avgPoints([263, 362, 373, 374, 380, 381, 382, 466]);
+    const leftPupil = toPixels(leftEyeCenterN);
+    const rightPupil = toPixels(rightEyeCenterN);
 
-    // Calculate face height in pixels
-    const faceHeightPx = Math.sqrt(
-      Math.pow(chin.x - forehead.x, 2) + Math.pow(chin.y - forehead.y, 2)
-    );
+    // Stable vertical refs
+    const foreheadTop = toPixels(lm[10]);
+    const chinBottom = toPixels(lm[152]);
+    const faceHeightPx = Math.abs(chinBottom.y - foreheadTop.y);
 
-    // Use face height as reference (average male face height is ~190mm)
-    // This is more stable than using PD which varies between individuals
-    const averageFaceHeightMm = 190;
-    const pxToMm = averageFaceHeightMm / faceHeightPx;
+    // Widths
+    const jawLeft = toPixels(lm[234]);
+    const jawRight = toPixels(lm[454]);
+    const faceWidthPx = Math.abs(jawRight.x - jawLeft.x);
 
-    // Calculate PD (Pupillary Distance)
-    const pupilDistancePx = Math.sqrt(
-      Math.pow(rightPupil.x - leftPupil.x, 2) +
-        Math.pow(rightPupil.y - leftPupil.y, 2)
-    );
-    const pd = pupilDistancePx * pxToMm;
+    const leftCheek = toPixels(lm[123]);
+    const rightCheek = toPixels(lm[352]);
+    const cheekboneWidthPx = Math.abs(rightCheek.x - leftCheek.x);
 
-    // Calculate NPD (Naso-Pupillary Distance)
-    const leftNpd =
-      Math.sqrt(
-        Math.pow(leftPupil.x - noseTip.x, 2) +
-          Math.pow(leftPupil.y - noseTip.y, 2)
-      ) * pxToMm;
+    const jawMidLeft = toPixels(lm[131]);
+    const jawMidRight = toPixels(lm[371]);
+    const jawWidthPx = Math.abs(jawMidRight.x - jawMidLeft.x);
 
-    const rightNpd =
-      Math.sqrt(
-        Math.pow(rightPupil.x - noseTip.x, 2) +
-          Math.pow(rightPupil.y - noseTip.y, 2)
-      ) * pxToMm;
+    const leftTemple = toPixels(lm[21]);
+    const rightTemple = toPixels(lm[251]);
+    const foreheadWidthPx = Math.abs(rightTemple.x - leftTemple.x);
 
-    // Calculate eye opening height
-    const leftEyeTop = toPixels(landmark[159]); // Left eye top
-    const leftEyeBottom = toPixels(landmark[145]); // Left eye bottom
-    const leftEyeHeight = Math.abs(leftEyeTop.y - leftEyeBottom.y) * pxToMm;
+    // Ratios
+    const faceRatio = faceWidthPx / (faceHeightPx || 1);
+    const cheekboneToFace = cheekboneWidthPx / (faceWidthPx || 1);
+    const jawToFace = jawWidthPx / (faceWidthPx || 1);
+    const foreheadToFace = foreheadWidthPx / (faceWidthPx || 1);
 
-    const rightEyeTop = toPixels(landmark[386]); // Right eye top
-    const rightEyeBottom = toPixels(landmark[374]); // Right eye bottom
-    const rightEyeHeight = Math.abs(rightEyeTop.y - rightEyeBottom.y) * pxToMm;
+    const cheek_jaw_rel = relDiff(cheekboneWidthPx, jawWidthPx);
+    const forehead_jaw_rel = relDiff(foreheadWidthPx, jawWidthPx);
+    const cheek_forehead_rel = relDiff(cheekboneWidthPx, foreheadWidthPx);
 
-    // Calculate pupil height (relative to eye corners)
-    const leftEyeInner = toPixels(landmark[133]); // Left eye inner corner
-    const leftEyeOuter = toPixels(landmark[33]); // Left eye outer corner
-    const leftPupilHeight =
-      Math.abs(leftPupil.y - (leftEyeInner.y + leftEyeOuter.y) / 2) * pxToMm;
+    // Orientation
+    const eyeYDiff = Math.abs(leftPupil.y - rightPupil.y);
+    const rollRel = eyeYDiff / (faceHeightPx || 1);
+    let orientation = "straight";
+    if (rollRel > 0.03) orientation = "tilted";
 
-    const rightEyeInner = toPixels(landmark[362]); // Right eye inner corner
-    const rightEyeOuter = toPixels(landmark[263]); // Right eye outer corner
-    const rightPupilHeight =
-      Math.abs(rightPupil.y - (rightEyeInner.y + rightEyeOuter.y) / 2) * pxToMm;
+    // Distance status
+    let distanceStatus = "checking";
+    if (faceHeightPx > 0) {
+      const opt = canvas.height * 0.6;
+      if (!optimalFaceHeightPx.current) optimalFaceHeightPx.current = opt;
 
-    // Enhanced face shape detection
-    const jawLeft = toPixels(landmark[234]);
-    const jawRight = toPixels(landmark[454]);
-    const jawlinePoints = Array.from({ length: 17 }, (_, i) =>
-      toPixels(landmark[234 + i])
-    );
+      if (faceHeightPx > optimalFaceHeightPx.current * 1.2) {
+        distanceStatus = "tooClose";
+      } else if (faceHeightPx < optimalFaceHeightPx.current * 0.8) {
+        distanceStatus = "tooFar";
+      } else {
+        distanceStatus = "optimal";
+      }
+    }
 
-    const faceWidth = Math.sqrt(Math.pow(jawRight.x - jawLeft.x, 2)) * pxToMm;
-    const faceHeight = Math.sqrt(Math.pow(chin.y - forehead.y, 2)) * pxToMm;
-
-    // Get cheekbone width
-    const leftCheek = toPixels(landmark[123]);
-    const rightCheek = toPixels(landmark[352]);
-    const cheekboneWidth =
-      Math.sqrt(Math.pow(rightCheek.x - leftCheek.x, 2)) * pxToMm;
-
-    // Get forehead width
-    const leftTemple = toPixels(landmark[21]);
-    const rightTemple = toPixels(landmark[251]);
-    const foreheadWidth =
-      Math.sqrt(Math.pow(rightTemple.x - leftTemple.x, 2)) * pxToMm;
-
-    // Get jawline angles for better shape detection
-    const jawAngleLeft =
-      (Math.atan2(
-        jawlinePoints[0].y - jawlinePoints[4].y,
-        jawlinePoints[0].x - jawlinePoints[4].x
-      ) *
-        180) /
-      Math.PI;
-
-    const jawAngleRight =
-      (Math.atan2(
-        jawlinePoints[16].y - jawlinePoints[12].y,
-        jawlinePoints[16].x - jawlinePoints[12].x
-      ) *
-        180) /
-      Math.PI;
-
-    // Calculate ratios for face shape detection
-    const faceRatio = faceWidth / faceHeight;
-    const cheekboneJawRatio = cheekboneWidth / faceWidth;
-    const foreheadJawRatio = foreheadWidth / faceWidth;
-
-    // Enhanced face shape classification with more accurate criteria
+    // Face shape classification
     let faceShape = "Oval";
-
-    if (
-      faceRatio > 0.85 &&
-      Math.abs(jawAngleLeft) < 120 &&
-      Math.abs(jawAngleRight) < 120
-    ) {
-      faceShape = "Round";
-    } else if (faceRatio < 0.75 && cheekboneJawRatio > 0.95) {
+    if (faceHeightPx / (faceWidthPx || 1) > 1.18) {
       faceShape = "Long";
     } else if (
-      Math.abs(faceWidth - cheekboneWidth) < 5 &&
-      Math.abs(faceWidth - foreheadWidth) < 5
+      cheek_jaw_rel < 0.08 &&
+      forehead_jaw_rel < 0.08 &&
+      cheek_forehead_rel < 0.08
     ) {
       faceShape = "Square";
     } else if (
-      foreheadJawRatio > 1.1 &&
-      cheekboneJawRatio > 1.05 &&
-      faceRatio > 0.8
-    ) {
-      faceShape = "Heart";
-    } else if (
-      cheekboneJawRatio > 1.05 &&
-      foreheadJawRatio < 0.95 &&
-      faceRatio < 0.85
+      cheekboneWidthPx > foreheadWidthPx &&
+      cheekboneWidthPx > jawWidthPx &&
+      cheekboneWidthPx / faceWidthPx > 0.34
     ) {
       faceShape = "Diamond";
-    } else if (Math.abs(jawAngleLeft) > 130 || Math.abs(jawAngleRight) > 130) {
+    } else if (
+      foreheadWidthPx > cheekboneWidthPx &&
+      foreheadWidthPx > jawWidthPx &&
+      relDiff(foreheadWidthPx, cheekboneWidthPx) > 0.05
+    ) {
+      faceShape = "Heart";
+    } else if (jawWidthPx > cheekboneWidthPx && jawWidthPx > foreheadWidthPx) {
       faceShape = "Triangle";
+    } else if (
+      relDiff(faceWidthPx, faceHeightPx) < 0.12 &&
+      cheek_jaw_rel < 0.12
+    ) {
+      faceShape = "Round";
     }
 
+    // 🔹 Apply smoothing before return
+    if (shapeSmootherRef) {
+      faceShape = smoothShape(shapeSmootherRef, faceShape);
+    }
+
+    // PD / NPD
+    const pupilDistancePx = Math.hypot(
+      rightPupil.x - leftPupil.x,
+      rightPupil.y - leftPupil.y
+    );
+    const noseTip = toPixels(lm[4]);
+    const leftNpdPx = Math.hypot(
+      leftPupil.x - noseTip.x,
+      leftPupil.y - noseTip.y
+    );
+    const rightNpdPx = Math.hypot(
+      rightPupil.x - noseTip.x,
+      rightPupil.y - noseTip.y
+    );
+
+    // Eye heights
+    const leftEyeTop = toPixels(lm[159]);
+    const leftEyeBottom = toPixels(lm[145]);
+    const leftEyeHeightPx = Math.abs(leftEyeTop.y - leftEyeBottom.y);
+
+    const rightEyeTop = toPixels(lm[386]);
+    const rightEyeBottom = toPixels(lm[374]);
+    const rightEyeHeightPx = Math.abs(rightEyeTop.y - rightEyeBottom.y);
+
+    // Validation
+    const isValid =
+      distanceStatus === "optimal" &&
+      orientation === "straight" &&
+      pupilDistancePx > 10;
+
     return {
-      pd: pd.toFixed(1),
-      npd: {
-        left: leftNpd.toFixed(1),
-        right: rightNpd.toFixed(1),
-      },
-      eyeHeight: {
-        left: leftEyeHeight.toFixed(1),
-        right: rightEyeHeight.toFixed(1),
-      },
-      pupilHeight: {
-        left: leftPupilHeight.toFixed(1),
-        right: rightPupilHeight.toFixed(1),
-        combined: ((leftPupilHeight + rightPupilHeight) / 2).toFixed(1),
+      pdPx: pupilDistancePx.toFixed(1),
+      npdPx: { left: leftNpdPx.toFixed(1), right: rightNpdPx.toFixed(1) },
+      eyeHeightPx: {
+        left: leftEyeHeightPx.toFixed(1),
+        right: rightEyeHeightPx.toFixed(1),
       },
       faceShape,
-      faceWidth: faceWidth.toFixed(1),
-      faceLength: faceHeight.toFixed(1),
+      faceWidthPx: faceWidthPx.toFixed(1),
+      faceHeightPx: faceHeightPx.toFixed(1),
+      ratios: {
+        faceRatio: faceRatio.toFixed(3),
+        cheekboneToFace: cheekboneToFace.toFixed(3),
+        jawToFace: jawToFace.toFixed(3),
+        foreheadToFace: foreheadToFace.toFixed(3),
+      },
+      distanceStatus,
+      orientation,
+      isValid,
     };
+  };
+
+  // Glasses detection heuristic
+  const detectGlasses = (tempCtx, landmarks, canvasWidth, canvasHeight) => {
+    const toPixels = (point) => ({
+      x: point.x * canvasWidth,
+      y: point.y * canvasHeight,
+    });
+
+    const noseBridge = toPixels(landmarks[168]);
+    const areaX = noseBridge.x - 10;
+    const areaY = noseBridge.y - 15; // Slightly above
+    const areaWidth = 20;
+    const areaHeight = 10;
+
+    let imageData;
+    try {
+      imageData = tempCtx.getImageData(areaX, areaY, areaWidth, areaHeight);
+    } catch (e) {
+      console.error("Error getting image data:", e);
+      return false;
+    }
+
+    let total = 0;
+    let count = 0;
+    for (let i = 0; i < imageData.data.length; i += 4) {
+      const r = imageData.data[i];
+      const g = imageData.data[i + 1];
+      const b = imageData.data[i + 2];
+      total += (r + g + b) / 3;
+      count++;
+    }
+
+    const avg = total / count;
+    return avg < 100; // Adjust threshold based on testing; lower means darker area, possibly glasses bridge
   };
 
   // Capture final measurements
   const captureMeasurements = () => {
-    if (measurements) {
+    if (
+      measurements &&
+      distanceStatus === "optimal" &&
+      orientationStatus === "straight" &&
+      glassesStatus !== "detected"
+    ) {
       setFinalMeasurements(measurements);
       setIsCaptured(true);
+      setAppState("results");
+    } else {
+      setWebcamError(
+        "Cannot capture measurements. Please ensure your face is properly detected, positioned at the optimal distance, straight, and without glasses."
+      );
     }
   };
 
-  // Reset capture and start over
+  // Update the resetCapture function
   const resetCapture = () => {
+    // Stop webcam if it's running
+    if (webcamRunning) {
+      setWebcamRunning(false);
+      if (webcamRef.current && webcamRef.current.srcObject) {
+        const tracks = webcamRef.current.srcObject.getTracks();
+        tracks.forEach((track) => track.stop());
+        webcamRef.current.srcObject = null;
+      }
+    }
+
     setFinalMeasurements(null);
     setIsCaptured(false);
+    setAppState("instructions");
+    setDistanceStatus("checking");
+    setOrientationStatus("checking");
+    setGlassesStatus("unknown");
+    setMeasurements(null);
+    setWebcamError(null);
   };
 
-  // Toggle webcam
+  // Update the startMeasurement function
+  const startMeasurement = async () => {
+    setAppState("measuring");
+    // Small delay to ensure state updates before starting webcam
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    toggleWebcam();
+  };
+
+  // Update the toggleWebcam function to handle state transitions better
   const toggleWebcam = async () => {
     if (!faceLandmarker) {
       setError("Face measurement model not loaded yet.");
@@ -253,25 +407,20 @@ const App = () => {
       setWebcamRunning(false);
       setWebcamError(null);
       setMeasurements(null);
-      setFinalMeasurements(null);
-      setIsCaptured(false);
       if (webcamRef.current && webcamRef.current.srcObject) {
         const tracks = webcamRef.current.srcObject.getTracks();
         tracks.forEach((track) => track.stop());
         webcamRef.current.srcObject = null;
-        webcamRef.current.pause();
       }
     } else {
       // Start webcam
       setWebcamRunning(true);
       setWebcamError(null);
-      setFinalMeasurements(null);
-      setIsCaptured(false);
 
       const constraints = {
         video: {
           facingMode: "user",
-          width: { ideal: 640 }, // Reduced resolution for better performance
+          width: { ideal: 640 },
           height: { ideal: 480 },
           frameRate: { ideal: 30 },
         },
@@ -371,6 +520,20 @@ const App = () => {
         // Clear previous error if face is detected
         setWebcamError(null);
 
+        // Glasses detection
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+        const tempCtx = tempCanvas.getContext("2d");
+        tempCtx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
+        const isGlasses = detectGlasses(
+          tempCtx,
+          results.faceLandmarks[0],
+          canvas.width,
+          canvas.height
+        );
+        setGlassesStatus(isGlasses ? "detected" : "none");
+
         // Calculate and update measurements
         const newMeasurements = calculateMeasurements(
           results.faceLandmarks,
@@ -419,8 +582,55 @@ const App = () => {
             ctx.fill();
           };
 
-          drawPoint(landmarks[468], "#ea4335", 3); // Left pupil
-          drawPoint(landmarks[473], "#ea4335", 3); // Right pupil
+          // Get more accurate eye center points for drawing
+          const leftEyeCenter = {
+            x:
+              (landmarks[33].x +
+                landmarks[133].x +
+                landmarks[157].x +
+                landmarks[158].x +
+                landmarks[159].x +
+                landmarks[160].x +
+                landmarks[161].x +
+                landmarks[246].x) /
+              8,
+            y:
+              (landmarks[33].y +
+                landmarks[133].y +
+                landmarks[157].y +
+                landmarks[158].y +
+                landmarks[159].y +
+                landmarks[160].y +
+                landmarks[161].y +
+                landmarks[246].y) /
+              8,
+          };
+
+          const rightEyeCenter = {
+            x:
+              (landmarks[263].x +
+                landmarks[362].x +
+                landmarks[373].x +
+                landmarks[374].x +
+                landmarks[380].x +
+                landmarks[381].x +
+                landmarks[382].x +
+                landmarks[466].x) /
+              8,
+            y:
+              (landmarks[263].y +
+                landmarks[362].y +
+                landmarks[373].y +
+                landmarks[374].y +
+                landmarks[380].y +
+                landmarks[381].y +
+                landmarks[382].y +
+                landmarks[466].y) /
+              8,
+          };
+
+          drawPoint(leftEyeCenter, "#ea4335", 3); // Left pupil
+          drawPoint(rightEyeCenter, "#ea4335", 3); // Right pupil
           drawPoint(landmarks[4], "#fbbc05", 3); // Nose tip
         }
       } else {
@@ -428,6 +638,9 @@ const App = () => {
           "No face detected. Please position your face in the frame and ensure good lighting."
         );
         setMeasurements(null);
+        setDistanceStatus("checking");
+        setOrientationStatus("checking");
+        setGlassesStatus("unknown");
       }
     } catch (error) {
       console.error("Error during face measurement:", error);
@@ -460,10 +673,350 @@ const App = () => {
     }
   }, [webcamRunning]);
 
+  // Update distance and orientation status
+  useEffect(() => {
+    if (measurements) {
+      setDistanceStatus(measurements.distanceStatus || "checking");
+      setOrientationStatus(measurements.orientation || "checking");
+    } else {
+      setDistanceStatus("checking");
+      setOrientationStatus("checking");
+    }
+  }, [measurements]);
+
   // Check if webcam is supported
   const hasGetUserMedia = () => {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   };
+
+  const renderInstructionsScreen = () => (
+    <div className="screen instructions-screen">
+      <div className="screen-content">
+        <h2>Getting Accurate Measurements</h2>
+
+        <div className="instruction-demo">
+          <div className="demo-face">
+            <div className="face-outline">
+              <div className="face-features">
+                <div className="eyes">
+                  <div className="eye left"></div>
+                  <div className="eye right"></div>
+                </div>
+                <div className="nose"></div>
+                <div className="mouth"></div>
+              </div>
+            </div>
+
+            <div className="demo-overlay">
+              <div className="measurement-lines">
+                <div className="line pd-line animated"></div>
+                <div className="line npd-line left animated"></div>
+                <div className="line npd-line right animated"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="instruction-steps">
+          {instructions.map((instruction, index) => (
+            <div
+              key={index}
+              className={`instruction-step ${
+                index === currentInstruction ? "active" : ""
+              }`}
+            >
+              <div className="step-icon">{instruction.icon}</div>
+              <div className="step-content">
+                <h3>{instruction.title}</h3>
+                <p>{instruction.description}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <button className="primary-button" onClick={startMeasurement}>
+          Start Measurement
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderMeasuringScreen = () => (
+    <div className="screen measuring-screen">
+      <div className="webcam-container">
+        <div className="webcam-controls">
+          <button className="webcam-toggle active" onClick={toggleWebcam}>
+            <span className="icon">
+              <FaSyncAlt />
+            </span>{" "}
+            Stop Measurement
+          </button>
+
+          <div className="fps-counter">FPS: {fps}</div>
+        </div>
+
+        {webcamError && (
+          <div className="error-message">
+            <span>
+              <strong>Webcam Error: </strong>
+              {webcamError}
+            </span>
+            <button onClick={() => setWebcamError(null)}>×</button>
+          </div>
+        )}
+
+        <div className="video-wrapper" ref={containerRef}>
+          <video
+            ref={webcamRef}
+            autoPlay
+            playsInline
+            muted
+            className="webcam-feed"
+            style={{
+              display: webcamRunning ? "block" : "none",
+              transform: "scaleX(-1)", // Mirror the webcam feed
+            }}
+          ></video>
+          <canvas
+            ref={outputCanvasRef}
+            className="measurement-canvas"
+            style={{ transform: "scaleX(-1)" }} // Mirror the canvas
+          ></canvas>
+
+          {!webcamRunning && (
+            <div className="webcam-placeholder">
+              <div className="placeholder-icon">👤</div>
+              <p>Webcam is disabled</p>
+              <p>Click "Start Measurement" to begin</p>
+            </div>
+          )}
+        </div>
+
+        <div className="status-indicators">
+          <div className="distance-feedback">
+            {distanceStatus === "checking" && (
+              <div className="feedback checking">
+                <div className="feedback-icon">
+                  <FaSearch />
+                </div>
+                <p>Looking for your face...</p>
+              </div>
+            )}
+            {distanceStatus === "tooClose" && (
+              <div className="feedback too-close">
+                <div className="feedback-icon">
+                  <FaArrowDown />
+                </div>
+                <p>Move slightly farther from the camera</p>
+              </div>
+            )}
+            {distanceStatus === "tooFar" && (
+              <div className="feedback too-far">
+                <div className="feedback-icon">
+                  <FaArrowUp />
+                </div>
+                <p>Move slightly closer to the camera</p>
+              </div>
+            )}
+            {distanceStatus === "optimal" && (
+              <div className="feedback optimal">
+                <div className="feedback-icon">
+                  <FaCheckCircle />
+                </div>
+                <p>Perfect distance! Ready to capture</p>
+              </div>
+            )}
+          </div>
+
+          <div className="orientation-feedback">
+            {orientationStatus === "checking" && (
+              <div className="feedback checking">
+                <div className="feedback-icon">
+                  <FaSearch />
+                </div>
+                <p>Checking face position...</p>
+              </div>
+            )}
+            {orientationStatus === "straight" && (
+              <div className="feedback optimal">
+                <div className="feedback-icon">
+                  <FaCheckCircle />
+                </div>
+                <p>Face position perfect!</p>
+              </div>
+            )}
+            {orientationStatus === "turnLeft" && (
+              <div className="feedback too-close">
+                <div className="feedback-icon">
+                  <FaArrowRight />
+                </div>
+                <p>Turn your face slightly to the right</p>
+              </div>
+            )}
+            {orientationStatus === "turnRight" && (
+              <div className="feedback too-close">
+                <div className="feedback-icon">
+                  <FaArrowLeft />
+                </div>
+                <p>Turn your face slightly to the left</p>
+              </div>
+            )}
+            {orientationStatus === "tilted" && (
+              <div className="feedback too-close">
+                <div className="feedback-icon">
+                  <FaSyncAlt />
+                </div>
+                <p>Level your head horizontally</p>
+              </div>
+            )}
+          </div>
+
+          <div className="glasses-feedback">
+            {glassesStatus === "detected" && (
+              <div className="feedback too-close">
+                <div className="feedback-icon">
+                  <FaGlasses />
+                </div>
+                <p>Please remove your glasses for accurate measurements</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="capture-controls">
+          <button
+            className="capture-button"
+            onClick={captureMeasurements}
+            disabled={
+              !measurements ||
+              distanceStatus !== "optimal" ||
+              orientationStatus !== "straight" ||
+              glassesStatus === "detected"
+            }
+          >
+            <span className="icon">
+              <FaCamera />
+            </span>{" "}
+            Capture Measurements
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderResultsScreen = () => (
+    <div className="screen results-screen">
+      <div className="screen-content">
+        <h2>Your Facial Measurements</h2>
+        <div className="measurements-grid">
+          <div className="measurement-card">
+            <h3>Pupillary Distance (PD)</h3>
+            <div className="measurement-value">{finalMeasurements.pd} mm</div>
+            <p className="measurement-desc">Distance between pupils</p>
+          </div>
+
+          <div className="measurement-card">
+            <h3>Naso-Pupillary Distance (NPD)</h3>
+            <div className="measurement-subvalues">
+              <div>
+                <span className="label">Left Eye:</span>
+                <span className="value">{finalMeasurements.npd.left} mm</span>
+              </div>
+              <div>
+                <span className="label">Right Eye:</span>
+                <span className="value">{finalMeasurements.npd.right} mm</span>
+              </div>
+            </div>
+            <p className="measurement-desc">Distance from nose to each pupil</p>
+          </div>
+
+          <div className="measurement-card">
+            <h3>Eye Opening Height</h3>
+            <div className="measurement-subvalues">
+              <div>
+                <span className="label">Left Eye:</span>
+                <span className="value">
+                  {finalMeasurements.eyeHeight.left} mm
+                </span>
+              </div>
+              <div>
+                <span className="label">Right Eye:</span>
+                <span className="value">
+                  {finalMeasurements.eyeHeight.right} mm
+                </span>
+              </div>
+            </div>
+            <p className="measurement-desc">Vertical opening of eyes</p>
+          </div>
+
+          <div className="measurement-card">
+            <h3>Pupil Height</h3>
+            <div className="measurement-subvalues">
+              <div>
+                <span className="label">Left Eye:</span>
+                <span className="value">
+                  {finalMeasurements.pupilHeight.left} mm
+                </span>
+              </div>
+              <div>
+                <span className="label">Right Eye:</span>
+                <span className="value">
+                  {finalMeasurements.pupilHeight.right} mm
+                </span>
+              </div>
+              <div>
+                <span className="label">Combined:</span>
+                <span className="value">
+                  {finalMeasurements.pupilHeight.combined} mm
+                </span>
+              </div>
+            </div>
+            <p className="measurement-desc">Vertical position of pupils</p>
+          </div>
+
+          <div className="measurement-card">
+            <h3>Face Dimensions</h3>
+            <div className="measurement-subvalues">
+              <div>
+                <span className="label">Width:</span>
+                <span className="value">{finalMeasurements.faceWidth} mm</span>
+              </div>
+              <div>
+                <span className="label">Length:</span>
+                <span className="value">{finalMeasurements.faceLength} mm</span>
+              </div>
+            </div>
+            <p className="measurement-desc">Basic face measurements</p>
+          </div>
+
+          <div className="measurement-card">
+            <h3>Face Shape</h3>
+            <div className="measurement-value shape">
+              {finalMeasurements.faceShape}
+            </div>
+            <p className="measurement-desc">
+              Classification based on proportions
+            </p>
+          </div>
+        </div>
+
+        <div className="results-actions">
+          <button className="primary-button" onClick={resetCapture}>
+            <span className="icon">
+              <FaRedo />
+            </span>{" "}
+            Measure Again
+          </button>
+          <button className="secondary-button">
+            <span className="icon">
+              <FaEnvelope />
+            </span>{" "}
+            Email Results
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="app-container">
@@ -490,216 +1043,11 @@ const App = () => {
             <p>Loading measurement model...</p>
           </div>
         ) : (
-          <section className="measurement-section">
-            <div className="webcam-container">
-              <div className="webcam-controls">
-                <button
-                  className={`webcam-toggle ${webcamRunning ? "active" : ""}`}
-                  onClick={toggleWebcam}
-                  disabled={!hasGetUserMedia()}
-                >
-                  {webcamRunning ? (
-                    <>
-                      <span className="icon">●</span> Stop Measurement
-                    </>
-                  ) : (
-                    <>
-                      <span className="icon">▶</span> Start Measurement
-                    </>
-                  )}
-                </button>
-
-                {webcamRunning && (
-                  <>
-                    <div className="fps-counter">FPS: {fps}</div>
-                    {measurements && !isCaptured && (
-                      <button
-                        className="capture-button"
-                        onClick={captureMeasurements}
-                      >
-                        <span className="icon">📷</span> Capture Results
-                      </button>
-                    )}
-                    {isCaptured && (
-                      <button className="reset-button" onClick={resetCapture}>
-                        <span className="icon">↺</span> Reset
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-
-              {webcamError && (
-                <div className="error-message">
-                  <span>
-                    <strong>Webcam Error: </strong>
-                    {webcamError}
-                  </span>
-                  <button onClick={() => setWebcamError(null)}>×</button>
-                </div>
-              )}
-
-              <div className="video-wrapper" ref={containerRef}>
-                <video
-                  ref={webcamRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="webcam-feed"
-                  style={{
-                    display: webcamRunning ? "block" : "none",
-                    transform: "scaleX(-1)", // Mirror the webcam feed
-                  }}
-                ></video>
-                <canvas
-                  ref={outputCanvasRef}
-                  className="measurement-canvas"
-                  style={{ transform: "scaleX(-1)" }} // Mirror the canvas
-                ></canvas>
-
-                {!webcamRunning && (
-                  <div className="webcam-placeholder">
-                    <div className="placeholder-icon">👤</div>
-                    <p>Webcam is disabled</p>
-                    <p>Click "Start Measurement" to begin</p>
-                  </div>
-                )}
-              </div>
-
-              {!hasGetUserMedia() && (
-                <p className="browser-warning">
-                  Your browser does not support webcam access. Please try
-                  Chrome, Firefox, or Edge.
-                </p>
-              )}
-            </div>
-
-            {(finalMeasurements || measurements) && (
-              <div className="measurements-results">
-                <h2>
-                  {isCaptured
-                    ? "Final Facial Measurements"
-                    : "Current Facial Measurements"}
-                </h2>
-                <div className="measurements-grid">
-                  <div className="measurement-card">
-                    <h3>Pupillary Distance (PD)</h3>
-                    <div className="measurement-value">
-                      {(finalMeasurements || measurements).pd} mm
-                    </div>
-                    <p className="measurement-desc">Distance between pupils</p>
-                  </div>
-
-                  <div className="measurement-card">
-                    <h3>Naso-Pupillary Distance (NPD)</h3>
-                    <div className="measurement-subvalues">
-                      <div>
-                        <span className="label">Left Eye:</span>
-                        <span className="value">
-                          {(finalMeasurements || measurements).npd.left} mm
-                        </span>
-                      </div>
-                      <div>
-                        <span className="label">Right Eye:</span>
-                        <span className="value">
-                          {(finalMeasurements || measurements).npd.right} mm
-                        </span>
-                      </div>
-                    </div>
-                    <p className="measurement-desc">
-                      Distance from nose to each pupil
-                    </p>
-                  </div>
-
-                  <div className="measurement-card">
-                    <h3>Eye Opening Height</h3>
-                    <div className="measurement-subvalues">
-                      <div>
-                        <span className="label">Left Eye:</span>
-                        <span className="value">
-                          {(finalMeasurements || measurements).eyeHeight.left}{" "}
-                          mm
-                        </span>
-                      </div>
-                      <div>
-                        <span className="label">Right Eye:</span>
-                        <span className="value">
-                          {(finalMeasurements || measurements).eyeHeight.right}{" "}
-                          mm
-                        </span>
-                      </div>
-                    </div>
-                    <p className="measurement-desc">Vertical opening of eyes</p>
-                  </div>
-
-                  <div className="measurement-card">
-                    <h3>Pupil Height</h3>
-                    <div className="measurement-subvalues">
-                      <div>
-                        <span className="label">Left Eye:</span>
-                        <span className="value">
-                          {(finalMeasurements || measurements).pupilHeight.left}{" "}
-                          mm
-                        </span>
-                      </div>
-                      <div>
-                        <span className="label">Right Eye:</span>
-                        <span className="value">
-                          {
-                            (finalMeasurements || measurements).pupilHeight
-                              .right
-                          }{" "}
-                          mm
-                        </span>
-                      </div>
-                      <div>
-                        <span className="label">Combined:</span>
-                        <span className="value">
-                          {
-                            (finalMeasurements || measurements).pupilHeight
-                              .combined
-                          }{" "}
-                          mm
-                        </span>
-                      </div>
-                    </div>
-                    <p className="measurement-desc">
-                      Vertical position of pupils
-                    </p>
-                  </div>
-
-                  <div className="measurement-card">
-                    <h3>Face Dimensions</h3>
-                    <div className="measurement-subvalues">
-                      <div>
-                        <span className="label">Width:</span>
-                        <span className="value">
-                          {(finalMeasurements || measurements).faceWidth} mm
-                        </span>
-                      </div>
-                      <div>
-                        <span className="label">Length:</span>
-                        <span className="value">
-                          {(finalMeasurements || measurements).faceLength} mm
-                        </span>
-                      </div>
-                    </div>
-                    <p className="measurement-desc">Basic face measurements</p>
-                  </div>
-
-                  <div className="measurement-card">
-                    <h3>Face Shape</h3>
-                    <div className="measurement-value shape">
-                      {(finalMeasurements || measurements).faceShape}
-                    </div>
-                    <p className="measurement-desc">
-                      Classification based on proportions
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </section>
+          <>
+            {appState === "instructions" && renderInstructionsScreen()}
+            {appState === "measuring" && renderMeasuringScreen()}
+            {appState === "results" && renderResultsScreen()}
+          </>
         )}
       </main>
 
@@ -709,320 +1057,6 @@ const App = () => {
           consult a professional.
         </p>
       </footer>
-
-      <style jsx>{`
-        .app-container {
-          min-height: 100vh;
-          background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-          font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-        }
-
-        .app-header {
-          text-align: center;
-          padding: 2rem 1rem;
-          background: white;
-          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-        }
-
-        .app-header h1 {
-          margin: 0;
-          color: #2c3e50;
-          font-size: 2.5rem;
-        }
-
-        .app-header p {
-          margin: 0.5rem 0 0;
-          color: #7f8c8d;
-          font-size: 1.1rem;
-        }
-
-        .app-main {
-          max-width: 1200px;
-          margin: 0 auto;
-          padding: 2rem 1rem;
-        }
-
-        .loading-container {
-          text-align: center;
-          padding: 3rem;
-        }
-
-        .loading-spinner {
-          width: 50px;
-          height: 50px;
-          border: 5px solid #e3e3e3;
-          border-top: 5px solid #3498db;
-          border-radius: 50%;
-          animation: spin 1s linear infinite;
-          margin: 0 auto 1rem;
-        }
-
-        @keyframes spin {
-          0% {
-            transform: rotate(0deg);
-          }
-          100% {
-            transform: rotate(360deg);
-          }
-        }
-
-        .webcam-container {
-          background: white;
-          border-radius: 12px;
-          padding: 1.5rem;
-          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-          margin-bottom: 2rem;
-        }
-
-        .webcam-controls {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 1rem;
-          flex-wrap: wrap;
-          gap: 0.5rem;
-        }
-
-        .webcam-toggle {
-          background: #4285f4;
-          color: white;
-          border: none;
-          padding: 0.75rem 1.5rem;
-          border-radius: 50px;
-          font-weight: 600;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          transition: all 0.2s;
-        }
-
-        .webcam-toggle:hover {
-          background: #3367d6;
-        }
-
-        .webcam-toggle.active {
-          background: #ea4335;
-        }
-
-        .webcam-toggle:disabled {
-          background: #ccc;
-          cursor: not-allowed;
-        }
-
-        .fps-counter {
-          background: #f1f1f1;
-          padding: 0.5rem 1rem;
-          border-radius: 20px;
-          font-size: 0.9rem;
-          color: #666;
-        }
-
-        .capture-button {
-          background: #34a853;
-          color: white;
-          border: none;
-          padding: 0.75rem 1.5rem;
-          border-radius: 50px;
-          font-weight: 600;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          transition: all 0.2s;
-        }
-
-        .capture-button:hover {
-          background: #2d8d47;
-        }
-
-        .reset-button {
-          background: #fbbc05;
-          color: white;
-          border: none;
-          padding: 0.75rem 1.5rem;
-          border-radius: 50px;
-          font-weight: 600;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          transition: all 0.2s;
-        }
-
-        .reset-button:hover {
-          background: #e6a704;
-        }
-
-        .video-wrapper {
-          position: relative;
-          width: 100%;
-          height: 480px;
-          background: #000;
-          border-radius: 8px;
-          overflow: hidden;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .webcam-feed,
-        .measurement-canvas {
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          object-fit: contain; /* Changed from cover to contain to prevent zooming */
-        }
-
-        .measurement-canvas {
-          z-index: 10;
-        }
-
-        .webcam-placeholder {
-          text-align: center;
-          color: #bbb;
-          z-index: 1;
-        }
-
-        .placeholder-icon {
-          font-size: 4rem;
-          margin-bottom: 1rem;
-        }
-
-        .browser-warning {
-          color: #e74c3c;
-          margin-top: 1rem;
-          text-align: center;
-        }
-
-        .error-message {
-          background: #ffebee;
-          color: #c62828;
-          padding: 1rem;
-          border-radius: 8px;
-          margin-bottom: 1.5rem;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-
-        .error-message button {
-          background: none;
-          border: none;
-          color: #c62828;
-          font-size: 1.5rem;
-          cursor: pointer;
-          padding: 0;
-          width: 30px;
-          height: 30px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .measurements-results {
-          background: white;
-          border-radius: 12px;
-          padding: 2rem;
-          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-        }
-
-        .measurements-results h2 {
-          margin-top: 0;
-          color: #2c3e50;
-          text-align: center;
-          margin-bottom: 2rem;
-        }
-
-        .measurements-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-          gap: 1.5rem;
-        }
-
-        .measurement-card {
-          background: #f8f9fa;
-          border-radius: 10px;
-          padding: 1.5rem;
-          text-align: center;
-          border-left: 4px solid #4285f4;
-        }
-
-        .measurement-card h3 {
-          margin-top: 0;
-          color: #2c3e50;
-          font-size: 1.1rem;
-        }
-
-        .measurement-value {
-          font-size: 2rem;
-          font-weight: bold;
-          color: #4285f4;
-          margin: 1rem 0;
-        }
-
-        .measurement-value.shape {
-          font-size: 1.5rem;
-          text-transform: uppercase;
-          letter-spacing: 1px;
-          color: #34a853;
-        }
-
-        .measurement-subvalues {
-          margin: 1rem 0;
-        }
-
-        .measurement-subvalues div {
-          display: flex;
-          justify-content: space-between;
-          margin-bottom: 0.5rem;
-        }
-
-        .measurement-subvalues .label {
-          color: #7f8c8d;
-        }
-
-        .measurement-subvalues .value {
-          font-weight: bold;
-          color: #4285f4;
-        }
-
-        .measurement-desc {
-          color: #7f8c8d;
-          font-size: 0.9rem;
-          margin: 0;
-        }
-
-        .app-footer {
-          text-align: center;
-          padding: 1.5rem;
-          color: #7f8c8d;
-          font-size: 0.9rem;
-          background: white;
-          border-top: 1px solid #eee;
-        }
-
-        @media (max-width: 768px) {
-          .app-header h1 {
-            font-size: 2rem;
-          }
-
-          .video-wrapper {
-            height: 360px;
-          }
-
-          .measurements-grid {
-            grid-template-columns: 1fr;
-          }
-
-          .webcam-controls {
-            flex-direction: column;
-            align-items: stretch;
-          }
-        }
-      `}</style>
     </div>
   );
 };
