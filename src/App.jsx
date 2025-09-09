@@ -16,7 +16,6 @@ import {
   FaArrowLeft,
   FaArrowRight,
   FaSyncAlt,
-  FaCameraRotate, // Added camera rotate icon
 } from "react-icons/fa";
 
 const App = () => {
@@ -817,7 +816,7 @@ const App = () => {
           {availableCameras.length > 1 && (
             <button className="camera-switch" onClick={switchCamera}>
               <span className="icon">
-                <FaCameraRotate />
+                
               </span>{" "}
               Switch Camera
             </button>
