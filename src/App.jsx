@@ -117,32 +117,6 @@ const App = () => {
     }
   }, [appState, instructions.length]);
 
-  const relDiff = (a, b) => {
-    if (!a || !b) return 1.0;
-    return Math.abs(a - b) / ((a + b) / 2);
-  };
-
-  const smoothShape = (ref, newShape) => {
-    // simple majority / persistence technique
-    if (!ref.current.map) ref.current.map = {};
-    ref.current.map[newShape] = (ref.current.map[newShape] || 0) + 1;
-    // decay counts
-    Object.keys(ref.current.map).forEach((k) => {
-      ref.current.map[k] = Math.max(0, ref.current.map[k] - 0.2);
-      if (ref.current.map[k] < 0.01) delete ref.current.map[k];
-    });
-    // pick max
-    let best = null,
-      bestCount = -1;
-    Object.entries(ref.current.map).forEach(([k, v]) => {
-      if (v > bestCount) {
-        best = k;
-        bestCount = v;
-      }
-    });
-    return best || newShape;
-  };
-
   // Calculate measurements from landmarks
   const calculateMeasurements = (landmarks, canvas) => {
     if (!landmarks || landmarks.length === 0) return null;
@@ -157,51 +131,35 @@ const App = () => {
       };
     };
 
-    // Get more accurate eye center points
+    // Get accurate eye center points using iris landmarks
     const leftEyeCenter = {
       x:
-        (landmark[33].x +
-          landmark[133].x +
-          landmark[157].x +
-          landmark[158].x +
-          landmark[159].x +
-          landmark[160].x +
-          landmark[161].x +
-          landmark[246].x) /
-        8,
+        (landmark[468].x +
+          landmark[469].x +
+          landmark[470].x +
+          landmark[471].x) /
+        4,
       y:
-        (landmark[33].y +
-          landmark[133].y +
-          landmark[157].y +
-          landmark[158].y +
-          landmark[159].y +
-          landmark[160].y +
-          landmark[161].y +
-          landmark[246].y) /
-        8,
+        (landmark[468].y +
+          landmark[469].y +
+          landmark[470].y +
+          landmark[471].y) /
+        4,
     };
 
     const rightEyeCenter = {
       x:
-        (landmark[263].x +
-          landmark[362].x +
-          landmark[373].x +
-          landmark[374].x +
-          landmark[380].x +
-          landmark[381].x +
-          landmark[382].x +
-          landmark[466].x) /
-        8,
+        (landmark[473].x +
+          landmark[474].x +
+          landmark[475].x +
+          landmark[476].x) /
+        4,
       y:
-        (landmark[263].y +
-          landmark[362].y +
-          landmark[373].y +
-          landmark[374].y +
-          landmark[380].y +
-          landmark[381].y +
-          landmark[382].y +
-          landmark[466].y) /
-        8,
+        (landmark[473].y +
+          landmark[474].y +
+          landmark[475].y +
+          landmark[476].y) /
+        4,
     };
 
     // Convert to pixels
@@ -1012,71 +970,71 @@ const App = () => {
   );
 
   const renderResultsScreen = () => (
-  <div className="screen results-screen">
-    <div className="screen-content">
-      <h2>Your Facial Measurements</h2>
-      <div className="measurements-grid">
-        <div className="measurement-card">
-          <h3>Pupillary Distance (PD)</h3>
+    <div className="screen results-screen">
+      <div className="screen-content">
+        <h2>Your Facial Measurements</h2>
+        <div className="measurements-grid">
+          <div className="measurement-card">
+            <h3>Pupillary Distance (PD)</h3>
             <div className="measurement-value">{finalMeasurements.pd} mm</div>
-          <p className="measurement-desc">Distance between pupils</p>
-        </div>
-
-        <div className="measurement-card">
-          <h3>Naso-Pupillary Distance (NPD)</h3>
-          <div className="measurement-subvalues">
-            <div>
-              <span className="label">Left Eye:</span>
-                <span className="value">{finalMeasurements.npd.left} mm</span>
-            </div>
-            <div>
-              <span className="label">Right Eye:</span>
-                <span className="value">{finalMeasurements.npd.right} mm</span>
-            </div>
+            <p className="measurement-desc">Distance between pupils</p>
           </div>
-          <p className="measurement-desc">Distance from nose to each pupil</p>
-        </div>
 
-        <div className="measurement-card">
-          <h3>Eye Opening Height</h3>
-          <div className="measurement-subvalues">
-            <div>
-              <span className="label">Left Eye:</span>
-              <span className="value">
-                  {finalMeasurements.eyeHeight.left} mm
-              </span>
-            </div>
-            <div>
-              <span className="label">Right Eye:</span>
-              <span className="value">
-                  {finalMeasurements.eyeHeight.right} mm
-              </span>
-            </div>
-          </div>
-          <p className="measurement-desc">Vertical opening of eyes</p>
-        </div>
-
-        <div className="measurement-card">
-            <h3>Pupil Height</h3>
-          <div className="measurement-subvalues">
-            <div>
+          <div className="measurement-card">
+            <h3>Naso-Pupillary Distance (NPD)</h3>
+            <div className="measurement-subvalues">
+              <div>
                 <span className="label">Left Eye:</span>
-              <span className="value">
-                  {finalMeasurements.pupilHeight.left} mm
-              </span>
-            </div>
-            <div>
+                <span className="value">{finalMeasurements.npd.left} mm</span>
+              </div>
+              <div>
                 <span className="label">Right Eye:</span>
-              <span className="value">
+                <span className="value">{finalMeasurements.npd.right} mm</span>
+              </div>
+            </div>
+            <p className="measurement-desc">Distance from nose to each pupil</p>
+          </div>
+
+          <div className="measurement-card">
+            <h3>Eye Opening Height</h3>
+            <div className="measurement-subvalues">
+              <div>
+                <span className="label">Left Eye:</span>
+                <span className="value">
+                  {finalMeasurements.eyeHeight.left} mm
+                </span>
+              </div>
+              <div>
+                <span className="label">Right Eye:</span>
+                <span className="value">
+                  {finalMeasurements.eyeHeight.right} mm
+                </span>
+              </div>
+            </div>
+            <p className="measurement-desc">Vertical opening of eyes</p>
+          </div>
+
+          <div className="measurement-card">
+            <h3>Pupil Height</h3>
+            <div className="measurement-subvalues">
+              <div>
+                <span className="label">Left Eye:</span>
+                <span className="value">
+                  {finalMeasurements.pupilHeight.left} mm
+                </span>
+              </div>
+              <div>
+                <span className="label">Right Eye:</span>
+                <span className="value">
                   {finalMeasurements.pupilHeight.right} mm
-              </span>
-            </div>
-            <div>
+                </span>
+              </div>
+              <div>
                 <span className="label">Combined:</span>
-              <span className="value">
+                <span className="value">
                   {finalMeasurements.pupilHeight.combined} mm
-              </span>
-            </div>
+                </span>
+              </div>
             </div>
             <p className="measurement-desc">Vertical position of pupils</p>
           </div>
@@ -1084,46 +1042,46 @@ const App = () => {
           <div className="measurement-card">
             <h3>Face Dimensions</h3>
             <div className="measurement-subvalues">
-            <div>
+              <div>
                 <span className="label">Width:</span>
                 <span className="value">{finalMeasurements.faceWidth} mm</span>
-            </div>
+              </div>
               <div>
                 <span className="label">Length:</span>
                 <span className="value">{finalMeasurements.faceLength} mm</span>
-          </div>
+              </div>
             </div>
             <p className="measurement-desc">Basic face measurements</p>
-        </div>
-
-        <div className="measurement-card">
-          <h3>Face Shape</h3>
-          <div className="measurement-value shape">
-            {finalMeasurements.faceShape}
           </div>
-          <p className="measurement-desc">
-            Classification based on proportions
-          </p>
-        </div>
-      </div>
 
-      <div className="results-actions">
-        <button className="primary-button" onClick={resetCapture}>
-          <span className="icon">
-            <FaRedo />
-          </span>{" "}
-          Measure Again
-        </button>
-        <button className="secondary-button">
-          <span className="icon">
-            <FaEnvelope />
-          </span>{" "}
-          Email Results
-        </button>
+          <div className="measurement-card">
+            <h3>Face Shape</h3>
+            <div className="measurement-value shape">
+              {finalMeasurements.faceShape}
+            </div>
+            <p className="measurement-desc">
+              Classification based on proportions
+            </p>
+          </div>
+        </div>
+
+        <div className="results-actions">
+          <button className="primary-button" onClick={resetCapture}>
+            <span className="icon">
+              <FaRedo />
+            </span>{" "}
+            Measure Again
+          </button>
+          <button className="secondary-button">
+            <span className="icon">
+              <FaEnvelope />
+            </span>{" "}
+            Email Results
+          </button>
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
 
   return (
     <div className="app-container">
@@ -1167,5 +1125,4 @@ const App = () => {
     </div>
   );
 };
-
 export default App;
