@@ -131,51 +131,35 @@ const App = () => {
       };
     };
 
-    // Get more accurate eye center points
+    // Get accurate eye center points using iris landmarks
     const leftEyeCenter = {
       x:
-        (landmark[33].x +
-          landmark[133].x +
-          landmark[157].x +
-          landmark[158].x +
-          landmark[159].x +
-          landmark[160].x +
-          landmark[161].x +
-          landmark[246].x) /
-        8,
+        (landmark[468].x +
+          landmark[469].x +
+          landmark[470].x +
+          landmark[471].x) /
+        4,
       y:
-        (landmark[33].y +
-          landmark[133].y +
-          landmark[157].y +
-          landmark[158].y +
-          landmark[159].y +
-          landmark[160].y +
-          landmark[161].y +
-          landmark[246].y) /
-        8,
+        (landmark[468].y +
+          landmark[469].y +
+          landmark[470].y +
+          landmark[471].y) /
+        4,
     };
 
     const rightEyeCenter = {
       x:
-        (landmark[263].x +
-          landmark[362].x +
-          landmark[373].x +
-          landmark[374].x +
-          landmark[380].x +
-          landmark[381].x +
-          landmark[382].x +
-          landmark[466].x) /
-        8,
+        (landmark[473].x +
+          landmark[474].x +
+          landmark[475].x +
+          landmark[476].x) /
+        4,
       y:
-        (landmark[263].y +
-          landmark[362].y +
-          landmark[373].y +
-          landmark[374].y +
-          landmark[380].y +
-          landmark[381].y +
-          landmark[382].y +
-          landmark[466].y) /
-        8,
+        (landmark[473].y +
+          landmark[474].y +
+          landmark[475].y +
+          landmark[476].y) /
+        4,
     };
 
     // Convert to pixels
@@ -189,40 +173,18 @@ const App = () => {
     // Calculate face height in pixels using more accurate vertical measurement
     const faceHeightPx = Math.abs(chinBottom.y - foreheadTop.y);
 
-    // Use interpupillary distance as reference (more stable than face height)
-    // Average PD is ~62mm for adults, use this for calibration
-    const averagePDMm = 62;
+    // Use face height as reference for calibration (assuming average face height)
+    const averageFaceHeightMm = 190;
+    let pxToMm = averageFaceHeightMm / faceHeightPx;
+
+    // Calculate pupil distance in pixels
     const pupilDistancePx = Math.sqrt(
       Math.pow(rightPupil.x - leftPupil.x, 2) +
         Math.pow(rightPupil.y - leftPupil.y, 2)
     );
 
-    // Calculate pxToMm ratio using PD as reference (more accurate for PD measurement)
-    let pxToMm = averagePDMm / pupilDistancePx;
-
-    // Recalculate PD with calibrated ratio
+    // Calculate PD using the calibrated ratio
     const pd = pupilDistancePx * pxToMm;
-
-    // Calculate face width for additional validation
-    const faceLeft = toPixels(landmark[234]); // Left face edge
-    const faceRight = toPixels(landmark[454]); // Right face edge
-    const faceWidthPx = Math.abs(faceRight.x - faceLeft.x);
-
-    // Validate measurements - face width should be reasonable (typically 1.3-1.5x face height)
-    const faceWidthMm = faceWidthPx * pxToMm;
-    const faceHeightMm = faceHeightPx * pxToMm;
-
-    // If measurements seem unreasonable, fall back to face height reference
-    if (
-      faceWidthMm < 100 ||
-      faceWidthMm > 200 ||
-      faceHeightMm < 150 ||
-      faceHeightMm > 250
-    ) {
-      // Use face height as reference instead
-      const averageFaceHeightMm = 190;
-      pxToMm = averageFaceHeightMm / faceHeightPx;
-    }
 
     // Calculate NPD (Naso-Pupillary Distance)
     const noseTip = toPixels(landmark[4]); // Nose tip
@@ -238,23 +200,23 @@ const App = () => {
           Math.pow(rightPupil.y - noseTip.y, 2)
       ) * pxToMm;
 
-    // Calculate eye opening height (correct landmarks)
+    // Calculate eye opening height
     const leftEyeTop = toPixels(landmark[159]); // Left eye top
     const leftEyeBottom = toPixels(landmark[145]); // Left eye bottom
     const leftEyeHeight = Math.abs(leftEyeTop.y - leftEyeBottom.y) * pxToMm;
 
     const rightEyeTop = toPixels(landmark[386]); // Right eye top
-    const rightEyeBottom = toPixels(landmark[380]); // Right eye bottom (instead of 374)
+    const rightEyeBottom = toPixels(landmark[380]); // Right eye bottom
     const rightEyeHeight = Math.abs(rightEyeTop.y - rightEyeBottom.y) * pxToMm;
 
-    // Calculate pupil height relative to eye corners
-    const leftEyeInner = toPixels(landmark[133]); // Left inner corner
-    const leftEyeOuter = toPixels(landmark[33]); // Left outer corner
+    // Calculate pupil height (relative to eye corners)
+    const leftEyeInner = toPixels(landmark[133]); // Left eye inner corner
+    const leftEyeOuter = toPixels(landmark[33]); // Left eye outer corner
     const leftPupilHeight =
       Math.abs(leftPupil.y - (leftEyeInner.y + leftEyeOuter.y) / 2) * pxToMm;
 
-    const rightEyeInner = toPixels(landmark[362]); // Right inner corner
-    const rightEyeOuter = toPixels(landmark[263]); // Right outer corner
+    const rightEyeInner = toPixels(landmark[362]); // Right eye inner corner
+    const rightEyeOuter = toPixels(landmark[263]); // Right eye outer corner
     const rightPupilHeight =
       Math.abs(rightPupil.y - (rightEyeInner.y + rightEyeOuter.y) / 2) * pxToMm;
 
