@@ -125,6 +125,7 @@ const App = () => {
 
     // Convert normalized coordinates to pixel coordinates
     const toPixels = (point, canvas, isMirrored = false) => {
+      if (!canvas) return { x: 0, y: 0 }; // fallback
       // bounding rect (displayed size)
       const rect = canvas.getBoundingClientRect();
       // scale between canvas internal pixels and displayed pixels
@@ -583,13 +584,15 @@ const App = () => {
         setGlassesStatus(isGlasses ? "detected" : "none");
 
         // Calculate and update measurements
-        const newMeasurements = calculateMeasurements(
-          results.faceLandmarks,
-          canvas
-        );
-        if (newMeasurements) {
-          setMeasurements(newMeasurements);
+        if (canvas) {
+          const newMeasurements = calculateMeasurements(
+            results.faceLandmarks,
+            canvas
+          );
+          if (newMeasurements) setMeasurements(newMeasurements);
         }
+
+        
 
         // Draw face landmarks with minimal styling for measurement purposes
         for (const landmarks of results.faceLandmarks) {
