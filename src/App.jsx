@@ -175,7 +175,7 @@ const App = () => {
 
     // Use interpupillary distance as reference (more stable than face height)
     // Average PD is ~62mm for adults, use this for calibration
-    const averagePDMm = 62;
+    const averagePDMm = 65;
     const pupilDistancePx = Math.sqrt(
       Math.pow(rightPupil.x - leftPupil.x, 2) +
         Math.pow(rightPupil.y - leftPupil.y, 2)
