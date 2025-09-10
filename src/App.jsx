@@ -124,47 +124,52 @@ const App = () => {
     const landmark = landmarks[0];
 
     // Convert normalized coordinates to pixel coordinates
-    const toPixels = (point) => {
+    const toPixels = (point, canvas, isMirrored = false) => {
+      // bounding rect (displayed size)
+      const rect = canvas.getBoundingClientRect();
+      // scale between canvas internal pixels and displayed pixels
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+
+      // normalized -> displayed px
+      let xDisp = point.x * rect.width;
+      if (isMirrored) xDisp = rect.width - xDisp; // flip if camera mirrored
+
+      let yDisp = point.y * rect.height;
+
+      // convert to canvas internal pixels
       return {
-        x: point.x * canvas.width,
-        y: point.y * canvas.height,
+        x: xDisp * scaleX,
+        y: yDisp * scaleY,
       };
     };
 
-    // Get accurate eye center points using iris landmarks
-    const leftEyeCenter = {
-      x:
-        (landmark[468].x +
-          landmark[469].x +
-          landmark[470].x +
-          landmark[471].x) /
-        4,
-      y:
-        (landmark[468].y +
-          landmark[469].y +
-          landmark[470].y +
-          landmark[471].y) /
-        4,
+    const eyeCenterFromLandmarks = (landmark, indices) => {
+      // indices = {inner, outer, top, bottom}
+      const inner = landmark[indices.inner];
+      const outer = landmark[indices.outer];
+      const top = landmark[indices.top];
+      const bottom = landmark[indices.bottom];
+
+      const horiz = { x: (inner.x + outer.x) / 2, y: (inner.y + outer.y) / 2 };
+      const vert = { x: (top.x + bottom.x) / 2, y: (top.y + bottom.y) / 2 };
+
+      return { x: (horiz.x + vert.x) / 2, y: (horiz.y + vert.y) / 2 };
     };
 
-    const rightEyeCenter = {
-      x:
-        (landmark[473].x +
-          landmark[474].x +
-          landmark[475].x +
-          landmark[476].x) /
-        4,
-      y:
-        (landmark[473].y +
-          landmark[474].y +
-          landmark[475].y +
-          landmark[476].y) /
-        4,
-    };
+    // Usage inside calculateMeasurements(...)
+    const isMirrored = true; // set true if front camera mirrored in your UI
+    // choose indices per Mediapipe reference
+    const leftEyeIndices = { inner: 133, outer: 33, top: 159, bottom: 145 };
+    const rightEyeIndices = { inner: 362, outer: 263, top: 386, bottom: 374 };
+
+    // compute normalized centers first
+    const leftCenterNorm = eyeCenterFromLandmarks(landmark, leftEyeIndices);
+    const rightCenterNorm = eyeCenterFromLandmarks(landmark, rightEyeIndices);
 
     // Convert to pixels
-    const leftPupil = toPixels(leftEyeCenter);
-    const rightPupil = toPixels(rightEyeCenter);
+    const leftPupil = toPixels(leftCenterNorm, canvas, isMirrored);
+    const rightPupil = toPixels(rightCenterNorm, canvas, isMirrored);
 
     // Calculate face height using more stable reference points
     const foreheadTop = toPixels(landmark[10]); // Forehead top
