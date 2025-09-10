@@ -117,6 +117,32 @@ const App = () => {
     }
   }, [appState, instructions.length]);
 
+  const relDiff = (a, b) => {
+    if (!a || !b) return 1.0;
+    return Math.abs(a - b) / ((a + b) / 2);
+  };
+
+  const smoothShape = (ref, newShape) => {
+    // simple majority / persistence technique
+    if (!ref.current.map) ref.current.map = {};
+    ref.current.map[newShape] = (ref.current.map[newShape] || 0) + 1;
+    // decay counts
+    Object.keys(ref.current.map).forEach((k) => {
+      ref.current.map[k] = Math.max(0, ref.current.map[k] - 0.2);
+      if (ref.current.map[k] < 0.01) delete ref.current.map[k];
+    });
+    // pick max
+    let best = null,
+      bestCount = -1;
+    Object.entries(ref.current.map).forEach(([k, v]) => {
+      if (v > bestCount) {
+        best = k;
+        bestCount = v;
+      }
+    });
+    return best || newShape;
+  };
+
   // Calculate measurements from landmarks
   const calculateMeasurements = (landmarks, canvas) => {
     if (!landmarks || landmarks.length === 0) return null;
@@ -124,53 +150,63 @@ const App = () => {
     const landmark = landmarks[0];
 
     // Convert normalized coordinates to pixel coordinates
-    const toPixels = (point, canvas, isMirrored = false) => {
-      if (!canvas) return { x: 0, y: 0 }; // fallback
-      // bounding rect (displayed size)
-      const rect = canvas.getBoundingClientRect();
-      // scale between canvas internal pixels and displayed pixels
-      const scaleX = canvas.width / rect.width;
-      const scaleY = canvas.height / rect.height;
-
-      // normalized -> displayed px
-      let xDisp = point.x * rect.width;
-      if (isMirrored) xDisp = rect.width - xDisp; // flip if camera mirrored
-
-      let yDisp = point.y * rect.height;
-
-      // convert to canvas internal pixels
+    const toPixels = (point) => {
       return {
-        x: xDisp * scaleX,
-        y: yDisp * scaleY,
+        x: point.x * canvas.width,
+        y: point.y * canvas.height,
       };
     };
 
-    const eyeCenterFromLandmarks = (landmark, indices) => {
-      // indices = {inner, outer, top, bottom}
-      const inner = landmark[indices.inner];
-      const outer = landmark[indices.outer];
-      const top = landmark[indices.top];
-      const bottom = landmark[indices.bottom];
-
-      const horiz = { x: (inner.x + outer.x) / 2, y: (inner.y + outer.y) / 2 };
-      const vert = { x: (top.x + bottom.x) / 2, y: (top.y + bottom.y) / 2 };
-
-      return { x: (horiz.x + vert.x) / 2, y: (horiz.y + vert.y) / 2 };
+    // Get more accurate eye center points
+    const leftEyeCenter = {
+      x:
+        (landmark[33].x +
+          landmark[133].x +
+          landmark[157].x +
+          landmark[158].x +
+          landmark[159].x +
+          landmark[160].x +
+          landmark[161].x +
+          landmark[246].x) /
+        8,
+      y:
+        (landmark[33].y +
+          landmark[133].y +
+          landmark[157].y +
+          landmark[158].y +
+          landmark[159].y +
+          landmark[160].y +
+          landmark[161].y +
+          landmark[246].y) /
+        8,
     };
 
-    // Usage inside calculateMeasurements(...)
-    const isMirrored = true; // set true if front camera mirrored in your UI
-    // choose indices per Mediapipe reference
-    const leftEyeIndices = { inner: 133, outer: 33, top: 159, bottom: 145 };
-    const rightEyeIndices = { inner: 362, outer: 263, top: 386, bottom: 374 };
-
-    // compute normalized centers first
-    const leftCenterNorm = eyeCenterFromLandmarks(landmark, leftEyeIndices);
-    const rightCenterNorm = eyeCenterFromLandmarks(landmark, rightEyeIndices);
+    const rightEyeCenter = {
+      x:
+        (landmark[263].x +
+          landmark[362].x +
+          landmark[373].x +
+          landmark[374].x +
+          landmark[380].x +
+          landmark[381].x +
+          landmark[382].x +
+          landmark[466].x) /
+        8,
+      y:
+        (landmark[263].y +
+          landmark[362].y +
+          landmark[373].y +
+          landmark[374].y +
+          landmark[380].y +
+          landmark[381].y +
+          landmark[382].y +
+          landmark[466].y) /
+        8,
+    };
 
     // Convert to pixels
-    const leftPupil = toPixels(leftCenterNorm, canvas, isMirrored);
-    const rightPupil = toPixels(rightCenterNorm, canvas, isMirrored);
+    const leftPupil = toPixels(leftEyeCenter);
+    const rightPupil = toPixels(rightEyeCenter);
 
     // Calculate face height using more stable reference points
     const foreheadTop = toPixels(landmark[10]); // Forehead top
@@ -179,18 +215,40 @@ const App = () => {
     // Calculate face height in pixels using more accurate vertical measurement
     const faceHeightPx = Math.abs(chinBottom.y - foreheadTop.y);
 
-    // Use face height as reference for calibration (assuming average face height)
-    const averageFaceHeightMm = 190;
-    let pxToMm = averageFaceHeightMm / faceHeightPx;
-
-    // Calculate pupil distance in pixels
+    // Use interpupillary distance as reference (more stable than face height)
+    // Average PD is ~65mm for adults, use this for calibration
+    const averagePDMm = 65;
     const pupilDistancePx = Math.sqrt(
       Math.pow(rightPupil.x - leftPupil.x, 2) +
         Math.pow(rightPupil.y - leftPupil.y, 2)
     );
 
-    // Calculate PD using the calibrated ratio
+    // Calculate pxToMm ratio using PD as reference (more accurate for PD measurement)
+    let pxToMm = averagePDMm / pupilDistancePx;
+
+    // Recalculate PD with calibrated ratio
     const pd = pupilDistancePx * pxToMm;
+
+    // Calculate face width for additional validation
+    const faceLeft = toPixels(landmark[234]); // Left face edge
+    const faceRight = toPixels(landmark[454]); // Right face edge
+    const faceWidthPx = Math.abs(faceRight.x - faceLeft.x);
+
+    // Validate measurements - face width should be reasonable (typically 1.3-1.5x face height)
+    const faceWidthMm = faceWidthPx * pxToMm;
+    const faceHeightMm = faceHeightPx * pxToMm;
+
+    // If measurements seem unreasonable, fall back to face height reference
+    if (
+      faceWidthMm < 100 ||
+      faceWidthMm > 200 ||
+      faceHeightMm < 150 ||
+      faceHeightMm > 250
+    ) {
+      // Use face height as reference instead
+      const averageFaceHeightMm = 190;
+      pxToMm = averageFaceHeightMm / faceHeightPx;
+    }
 
     // Calculate NPD (Naso-Pupillary Distance)
     const noseTip = toPixels(landmark[4]); // Nose tip
@@ -212,7 +270,7 @@ const App = () => {
     const leftEyeHeight = Math.abs(leftEyeTop.y - leftEyeBottom.y) * pxToMm;
 
     const rightEyeTop = toPixels(landmark[386]); // Right eye top
-    const rightEyeBottom = toPixels(landmark[380]); // Right eye bottom
+    const rightEyeBottom = toPixels(landmark[374]); // Right eye bottom
     const rightEyeHeight = Math.abs(rightEyeTop.y - rightEyeBottom.y) * pxToMm;
 
     // Calculate pupil height (relative to eye corners)
@@ -584,15 +642,13 @@ const App = () => {
         setGlassesStatus(isGlasses ? "detected" : "none");
 
         // Calculate and update measurements
-        if (canvas) {
-          const newMeasurements = calculateMeasurements(
-            results.faceLandmarks,
-            canvas
-          );
-          if (newMeasurements) setMeasurements(newMeasurements);
+        const newMeasurements = calculateMeasurements(
+          results.faceLandmarks,
+          canvas
+        );
+        if (newMeasurements) {
+          setMeasurements(newMeasurements);
         }
-
-        
 
         // Draw face landmarks with minimal styling for measurement purposes
         for (const landmarks of results.faceLandmarks) {
@@ -956,71 +1012,71 @@ const App = () => {
   );
 
   const renderResultsScreen = () => (
-    <div className="screen results-screen">
-      <div className="screen-content">
-        <h2>Your Facial Measurements</h2>
-        <div className="measurements-grid">
-          <div className="measurement-card">
-            <h3>Pupillary Distance (PD)</h3>
+  <div className="screen results-screen">
+    <div className="screen-content">
+      <h2>Your Facial Measurements</h2>
+      <div className="measurements-grid">
+        <div className="measurement-card">
+          <h3>Pupillary Distance (PD)</h3>
             <div className="measurement-value">{finalMeasurements.pd} mm</div>
-            <p className="measurement-desc">Distance between pupils</p>
-          </div>
+          <p className="measurement-desc">Distance between pupils</p>
+        </div>
 
-          <div className="measurement-card">
-            <h3>Naso-Pupillary Distance (NPD)</h3>
-            <div className="measurement-subvalues">
-              <div>
-                <span className="label">Left Eye:</span>
+        <div className="measurement-card">
+          <h3>Naso-Pupillary Distance (NPD)</h3>
+          <div className="measurement-subvalues">
+            <div>
+              <span className="label">Left Eye:</span>
                 <span className="value">{finalMeasurements.npd.left} mm</span>
-              </div>
-              <div>
-                <span className="label">Right Eye:</span>
+            </div>
+            <div>
+              <span className="label">Right Eye:</span>
                 <span className="value">{finalMeasurements.npd.right} mm</span>
-              </div>
             </div>
-            <p className="measurement-desc">Distance from nose to each pupil</p>
           </div>
+          <p className="measurement-desc">Distance from nose to each pupil</p>
+        </div>
 
-          <div className="measurement-card">
-            <h3>Eye Opening Height</h3>
-            <div className="measurement-subvalues">
-              <div>
-                <span className="label">Left Eye:</span>
-                <span className="value">
+        <div className="measurement-card">
+          <h3>Eye Opening Height</h3>
+          <div className="measurement-subvalues">
+            <div>
+              <span className="label">Left Eye:</span>
+              <span className="value">
                   {finalMeasurements.eyeHeight.left} mm
-                </span>
-              </div>
-              <div>
-                <span className="label">Right Eye:</span>
-                <span className="value">
-                  {finalMeasurements.eyeHeight.right} mm
-                </span>
-              </div>
+              </span>
             </div>
-            <p className="measurement-desc">Vertical opening of eyes</p>
+            <div>
+              <span className="label">Right Eye:</span>
+              <span className="value">
+                  {finalMeasurements.eyeHeight.right} mm
+              </span>
+            </div>
           </div>
+          <p className="measurement-desc">Vertical opening of eyes</p>
+        </div>
 
-          <div className="measurement-card">
+        <div className="measurement-card">
             <h3>Pupil Height</h3>
-            <div className="measurement-subvalues">
-              <div>
+          <div className="measurement-subvalues">
+            <div>
                 <span className="label">Left Eye:</span>
-                <span className="value">
+              <span className="value">
                   {finalMeasurements.pupilHeight.left} mm
-                </span>
-              </div>
-              <div>
+              </span>
+            </div>
+            <div>
                 <span className="label">Right Eye:</span>
-                <span className="value">
+              <span className="value">
                   {finalMeasurements.pupilHeight.right} mm
-                </span>
-              </div>
-              <div>
+              </span>
+            </div>
+            <div>
                 <span className="label">Combined:</span>
-                <span className="value">
+              <span className="value">
                   {finalMeasurements.pupilHeight.combined} mm
-                </span>
-              </div>
+              </span>
+            </div>
             </div>
             <p className="measurement-desc">Vertical position of pupils</p>
           </div>
@@ -1028,46 +1084,46 @@ const App = () => {
           <div className="measurement-card">
             <h3>Face Dimensions</h3>
             <div className="measurement-subvalues">
-              <div>
+            <div>
                 <span className="label">Width:</span>
                 <span className="value">{finalMeasurements.faceWidth} mm</span>
-              </div>
+            </div>
               <div>
                 <span className="label">Length:</span>
                 <span className="value">{finalMeasurements.faceLength} mm</span>
-              </div>
+          </div>
             </div>
             <p className="measurement-desc">Basic face measurements</p>
-          </div>
-
-          <div className="measurement-card">
-            <h3>Face Shape</h3>
-            <div className="measurement-value shape">
-              {finalMeasurements.faceShape}
-            </div>
-            <p className="measurement-desc">
-              Classification based on proportions
-            </p>
-          </div>
         </div>
 
-        <div className="results-actions">
-          <button className="primary-button" onClick={resetCapture}>
-            <span className="icon">
-              <FaRedo />
-            </span>{" "}
-            Measure Again
-          </button>
-          <button className="secondary-button">
-            <span className="icon">
-              <FaEnvelope />
-            </span>{" "}
-            Email Results
-          </button>
+        <div className="measurement-card">
+          <h3>Face Shape</h3>
+          <div className="measurement-value shape">
+            {finalMeasurements.faceShape}
+          </div>
+          <p className="measurement-desc">
+            Classification based on proportions
+          </p>
         </div>
       </div>
+
+      <div className="results-actions">
+        <button className="primary-button" onClick={resetCapture}>
+          <span className="icon">
+            <FaRedo />
+          </span>{" "}
+          Measure Again
+        </button>
+        <button className="secondary-button">
+          <span className="icon">
+            <FaEnvelope />
+          </span>{" "}
+          Email Results
+        </button>
+      </div>
     </div>
-  );
+  </div>
+);
 
   return (
     <div className="app-container">
@@ -1111,4 +1167,5 @@ const App = () => {
     </div>
   );
 };
+
 export default App;
